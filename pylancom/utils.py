@@ -36,6 +36,7 @@ class ComponentType(enum.Enum):
 
 class ComponentInfo(TypedDict):
     name: str
+    componentID: HashIdentifier
     type: str
     ip: IPAddress
     port: Port
@@ -43,14 +44,14 @@ class ComponentInfo(TypedDict):
 
 class NodeInfo(TypedDict):
     name: str
-    nodeID: str  # hash code since bytes is not JSON serializable
+    nodeID: HashIdentifier  # hash code since bytes is not JSON serializable
     ip: IPAddress
     port: Port
     type: str
-    servicePort: int
-    topicPort: int
-    serviceList: List[ServiceName]
-    topicList: List[TopicName]
+    # servicePort: int
+    # topicPort: int
+    serviceList: List[ComponentInfo]
+    topicList: List[ComponentInfo]
 
 
 class ConnectionState(TypedDict):
