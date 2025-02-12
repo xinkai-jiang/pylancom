@@ -4,6 +4,7 @@ import struct
 import socket
 from typing import List, Dict, TypedDict
 import enum
+from enum import IntEnum
 from traceback import print_exc
 import uuid
 
@@ -22,16 +23,16 @@ HEARTBEAT_INTERVAL = 0.2
 DISCOVERY_PORT = int(7720)
 
 
-class MSG(enum.Enum):
-    PING = b"\x00"
-    SERVICE_ERROR = b"\x10"
-    SERVICE_TIMEOUT = b"\x11"
+class MSG(IntEnum):
+    PING = 0
+    SERVICE_ERROR = 1
+    SERVICE_TIMEOUT = 2
 
 
-class ComponentType(enum.Enum):
-    PUBLISHER = "Publisher"
-    SUBSCRIBER = "Subscriber"
-    SERVICE = "Service"
+class ComponentType(IntEnum):
+    PUBLISHER = 0
+    SUBSCRIBER = 1
+    SERVICE = 2
 
 
 class ComponentInfo(TypedDict):
@@ -46,20 +47,20 @@ class NodeInfo(TypedDict):
     name: str
     nodeID: HashIdentifier  # hash code since bytes is not JSON serializable
     ip: IPAddress
-    port: Port
+    # port: Port
     type: str
-    # servicePort: int
-    # topicPort: int
-    serviceList: List[ComponentInfo]
+    topicPort: int
     topicList: List[ComponentInfo]
+    servicePort: int
+    serviceList: List[ComponentInfo]
 
 
 class ConnectionState(TypedDict):
-    topic: Dict[TopicName, Dict[ComponentType, List[ComponentInfo]]]
+    topic: Dict[TopicName, List[ComponentInfo]]
     service: Dict[ServiceName, ComponentInfo]
 
 
-def generate_hash() -> HashIdentifier:
+def create_hash_identifier() -> HashIdentifier:
     return str(uuid.uuid4())
 
 
@@ -95,7 +96,7 @@ def get_zmq_socket_port(socket: zmq.asyncio.Socket) -> int:
     return int(endpoint.decode().split(":")[-1])
 
 
-def split_byte(bytes_msg: bytes) -> List[bytes]:
+def bmsgsplit(bytes_msg: bytes) -> List[bytes]:
     return bytes_msg.split(b"|", 1)
 
 

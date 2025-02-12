@@ -16,47 +16,31 @@ import traceback
 from .log import logger
 from .utils import DISCOVERY_PORT
 from .utils import NodeInfo, ComponentType, ConnectionState, ComponentInfo
-from .utils import generate_hash
+from .utils import HashIdentifier
 from .utils import MSG, split_byte
 
+from . import utils
 
 class AbstractNode(abc.ABC):
-
-    manager: "AbstractNode" = None
 
     def __init__(self, node_name: str, node_ip: str) -> None:
         super().__init__()
         self.zmq_context: AsyncContext = zmq.asyncio.Context()  # type: ignore
-        # publisher
-        self.pub_socket = self.create_socket(zmq.PUB)
-        self.pub_socket.bind(f"tcp://{node_ip}:0")
-        # subscribers
-        self.sub_sockets: Dict[str, zmq.asyncio.Socket] = {}
-        # service
-        self.service_socket = self.zmq_context.socket(zmq.REP)
-        self.service_socket.bind(f"tcp://{node_ip}:0")
-        self.service_cbs: Dict[bytes, Callable[[bytes], Awaitable]] = {}
+        self.id: HashIdentifier = utils.create_hash_identifier()
         # message for broadcasting
-        self.local_info: NodeInfo = {
-            "name": node_name,
-            "nodeID": generate_hash(),
-            "ip": node_ip,
-            "port": 0,
-            "type": "Master",
-            "servicePort": 0,
-            "topicPort": 0,
-            "serviceList": [],
-            "topicList": [],
-        }
-        self.connection_state: ConnectionState = {"topic": {}, "service": {}}
-        logger.info(f"Node {node_name} starts at {node_ip}:{DISCOVERY_PORT}")
+        self.pub_socket = self.create_socket(zmq.PUB)
+        self.pub_socket.bind(f"tcp://{node_ip}:{DISCOVERY_PORT}")
+        self.service_socket = self.create_socket(zmq.REP)
+        self.service_socket.bind(f"tcp://{node_ip}:0")
+        # self.connection_state: ConnectionState = {"topic": {}, "service": {}}
+        # logger.info(f"Node {node_name} starts at {node_ip}:{DISCOVERY_PORT}")
         # start the server in a thread pool
-        self.executor = ThreadPoolExecutor(max_workers=10)
-        self.server_future = self.executor.submit(self.thread_task)
-        # wait for the loop starts
-        while not hasattr(self, "loop"):
-            time.sleep(0.01)
-        logger.info(f"Node {self.local_info['name']} is initialized")
+        # self.executor = ThreadPoolExecutor(max_workers=10)
+        # self.server_future = self.executor.submit(self.thread_task)
+        # # wait for the loop starts
+        # while not hasattr(self, "loop"):
+        #     time.sleep(0.01)
+        # logger.info(f"Node {self.local_info['name']} is initialized")
 
     def create_socket(self, socket_type: int) -> zmq.asyncio.Socket:
         return self.zmq_context.socket(socket_type)
@@ -70,7 +54,7 @@ class AbstractNode(abc.ABC):
             raise RuntimeError("The event loop is not running")
         return asyncio.run_coroutine_threadsafe(task(*args), self.loop)
 
-    def thread_task(self) -> None:
+    def spin_task(self) -> None:
         logger.info("The node is running...")
         try:
             self.loop = asyncio.get_event_loop()  # Get the existing event loop
@@ -112,6 +96,8 @@ class AbstractNode(abc.ABC):
         if service_name not in self.connection_state["service"]:
             return None
         return self.connection_state["service"][service_name]
+
+
 
     async def service_loop(self):
         logger.info("The service loop is running...")
