@@ -17,30 +17,44 @@ from .log import logger
 from .utils import DISCOVERY_PORT
 from .utils import NodeInfo, ComponentType, ConnectionState, ComponentInfo
 from .utils import HashIdentifier
-from .utils import MSG, split_byte
+from .utils import MSG
 
 from . import utils
 
+
 class AbstractNode(abc.ABC):
 
-    def __init__(self, node_name: str, node_ip: str) -> None:
+    def __init__(
+        self,
+        node_name: str,
+        node_type: str,
+        node_ip: str,
+        pub_port: int = 0,
+        service_port: int = 0
+    ) -> None:
         super().__init__()
         self.zmq_context: AsyncContext = zmq.asyncio.Context()  # type: ignore
-        self.id: HashIdentifier = utils.create_hash_identifier()
-        # message for broadcasting
+        self.context = zmq.asyncio.Context()  # type: ignore
         self.pub_socket = self.create_socket(zmq.PUB)
-        self.pub_socket.bind(f"tcp://{node_ip}:{DISCOVERY_PORT}")
+        self.pub_socket.bind(f"tcp://{node_ip}:{pub_port}")
         self.service_socket = self.create_socket(zmq.REP)
-        self.service_socket.bind(f"tcp://{node_ip}:0")
-        # self.connection_state: ConnectionState = {"topic": {}, "service": {}}
-        # logger.info(f"Node {node_name} starts at {node_ip}:{DISCOVERY_PORT}")
-        # start the server in a thread pool
-        # self.executor = ThreadPoolExecutor(max_workers=10)
-        # self.server_future = self.executor.submit(self.thread_task)
-        # # wait for the loop starts
-        # while not hasattr(self, "loop"):
-        #     time.sleep(0.01)
-        # logger.info(f"Node {self.local_info['name']} is initialized")
+        self.service_socket.bind(f"tcp://{node_ip}:{service_port}")
+        self.local_info: NodeInfo = {
+            "name": node_name,
+            "nodeID": utils.create_hash_identifier(),
+            "ip": node_ip,
+            "type": node_type,
+            "topicPort": utils.get_zmq_socket_port(self.pub_socket),
+            "topicList": [],
+            "servicePort": utils.get_zmq_socket_port(self.service_socket),
+            "serviceList": [],
+        }
+        self.service_cbs: Dict[str, Callable] = {}
+        self.log_node_state()
+
+    def log_node_state(self):
+        for key, value in self.local_info.items():
+            print(f"    {key}: {value}")
 
     def create_socket(self, socket_type: int) -> zmq.asyncio.Socket:
         return self.zmq_context.socket(socket_type)
@@ -53,6 +67,10 @@ class AbstractNode(abc.ABC):
         if not self.loop:
             raise RuntimeError("The event loop is not running")
         return asyncio.run_coroutine_threadsafe(task(*args), self.loop)
+
+    def spin(self, block: bool = True) -> None:
+        if block:
+            self.spin_task()
 
     def spin_task(self) -> None:
         logger.info("The node is running...")
@@ -67,7 +85,7 @@ class AbstractNode(abc.ABC):
         except Exception as e:
             logger.error(f"Unexpected error in thread_task: {e}")
         finally:
-            logger.info("The node has been stopped")
+            logger.info(f"Node {self.local_info['name']} has been stopped")
 
     @abc.abstractmethod
     def initialize_event_loop(self):
@@ -81,23 +99,7 @@ class AbstractNode(abc.ABC):
                 self.loop.call_soon_threadsafe(self.loop.stop)
         except RuntimeError as e:
             logger.error(f"One error occurred when stop server: {e}")
-        self.executor.shutdown(wait=False)
-
-    def spin(self, block: bool = False) -> None:
-        pass
-
-    def check_topic(self, topic_name: str) -> Optional[List[ComponentInfo]]:
-        topic_info = self.connection_state["topic"]
-        if topic_name not in topic_info["topic"]:
-            return None
-        return topic_info[topic_name]["Publisher"]
-
-    def check_service(self, service_name: str) -> Optional[ComponentInfo]:
-        if service_name not in self.connection_state["service"]:
-            return None
-        return self.connection_state["service"][service_name]
-
-
+        # self.executor.shutdown(wait=False)
 
     async def service_loop(self):
         logger.info("The service loop is running...")
@@ -123,20 +125,20 @@ class AbstractNode(abc.ABC):
         logger.info("Service loop has been stopped")
 
 
-class AbstractComponent(abc.ABC):
-    def __init__(self):
-        # TODO: start a new node if there is no manager
-        if AbstractNode.manager is None:
-            raise ValueError("NodeManager is not initialized")
-        self.manager: AbstractNode = AbstractNode.manager
-        self.running: bool = False
-        self.host_ip: str = self.manager.local_info["ip"]
-        self.local_name: str = self.manager.local_info["name"]
+# class AbstractComponent(abc.ABC):
+#     def __init__(self):
+#         # TODO: start a new node if there is no manager
+#         if AbstractNode.manager is None:
+#             raise ValueError("NodeManager is not initialized")
+#         self.manager: AbstractNode = AbstractNode.manager
+#         self.running: bool = False
+#         self.host_ip: str = self.manager.local_info["ip"]
+#         self.local_name: str = self.manager.local_info["name"]
 
-    def shutdown(self) -> None:
-        self.running = False
-        self.on_shutdown()
+#     def shutdown(self) -> None:
+#         self.running = False
+#         self.on_shutdown()
 
-    @abc.abstractmethod
-    def on_shutdown(self):
-        raise NotImplementedError
+#     @abc.abstractmethod
+#     def on_shutdown(self):
+#         raise NotImplementedError

@@ -2,7 +2,7 @@ import zmq
 import zmq.asyncio
 import struct
 import socket
-from typing import List, Dict, TypedDict
+from typing import List, Dict, TypedDict, Optional
 import enum
 from enum import IntEnum
 from traceback import print_exc
@@ -21,6 +21,8 @@ HashIdentifier = str
 BROADCAST_INTERVAL = 0.5
 HEARTBEAT_INTERVAL = 0.2
 DISCOVERY_PORT = int(7720)
+MASTER_TOPIC_PORT = int(7721)
+MASTER_SERVICE_PORT = int(7722)
 
 
 class MSG(IntEnum):
@@ -64,7 +66,6 @@ def create_hash_identifier() -> HashIdentifier:
     return str(uuid.uuid4())
 
 
-
 async def send_request(msg: str, addr: str, context: zmq.asyncio.Context) -> str:
     req_socket = context.socket(zmq.REQ)
     req_socket.connect(addr)
@@ -100,12 +101,43 @@ def bmsgsplit(bytes_msg: bytes) -> List[bytes]:
     return bytes_msg.split(b"|", 1)
 
 
-def split_byte_to_str(bytes_msg: bytes) -> List[str]:
-    return [item.decode() for item in split_byte(bytes_msg)]
+# def split_byte_to_str(bytes_msg: bytes) -> List[str]:
+#     return [item.decode() for item in split_byte(bytes_msg)]
 
 
-def split_str(str_msg: str) -> List[str]:
-    return str_msg.split("|", 1)
+# def split_str(str_msg: str) -> List[str]:
+#     return str_msg.split("|", 1)
+
+
+def search_for_master_node(
+    ip: str = "0.0.0.0", port: int = DISCOVERY_PORT, timeout: float = 1.0
+) -> Optional[str]:
+    """
+    Listens on the given UDP port for incoming messages.
+
+    Args:
+        port (int): The port number to listen on.
+        timeout (int): Timeout in seconds before quitting.
+
+    Returns:
+        str or None: Sender's IP address if a message is received, None otherwise.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server_socket:
+        server_socket.bind((ip, port))  # Listen on all interfaces
+        server_socket.settimeout(timeout)  # Set a timeout
+
+        try:
+            print(f"Listening for UDP messages on port {port}...")
+            data, addr = server_socket.recvfrom(1024)  # Receive data (max 1024 bytes)
+            if data:
+                print(f"Received message from {addr[0]}: {data.decode()}")
+                return addr[0]  # Return sender's IP address
+        except socket.timeout:
+            print("No message received. Exiting.")
+            return None
+        except Exception as e:
+            print(f"Error: {e}")
+            return None
 
 
 # def search_for_master_node(

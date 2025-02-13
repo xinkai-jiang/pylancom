@@ -12,14 +12,18 @@ from json import dumps, loads
 import concurrent.futures
 import traceback
 
+
 from .log import logger
-from .utils import DISCOVERY_PORT
+from .utils import DISCOVERY_PORT, MASTER_TOPIC_PORT, MASTER_SERVICE_PORT
 from .utils import IPAddress, HashIdentifier, ServiceName, TopicName
 from .utils import NodeInfo, ConnectionState
-from .abstract_node import AbstractNode
+
+# from .abstract_node import AbstractNode
 from .utils import bmsgsplit
 from .utils import MSG
 from . import utils
+from .abstract_node import AbstractNode
+
 
 class NodesInfoManager:
 
@@ -48,10 +52,7 @@ class NodesInfoManager:
     def register_node(self, info: NodeInfo):
         node_id = info["nodeID"]
         if node_id not in self.nodes_info.keys():
-            logger.info(
-                f"Node {info['name']} from "
-                f"{info['ip']} has been launched"
-            )
+            logger.info(f"Node {info['name']} from " f"{info['ip']} has been launched")
             topic_state = self.connection_state["topic"]
             for topic in info["topicList"]:
                 topic_state[topic["name"]].append(topic)
@@ -80,68 +81,25 @@ class NodesInfoManager:
         return None
 
 
-
-
-class LanComMaster:
+class LanComMasterNode(AbstractNode):
     def __init__(self, node_ip: IPAddress) -> None:
-        self.context = zmq.asyncio.Context()  # type: ignore
-        self.ip = node_ip
-        self.pub_socket = self.create_socket(zmq.PUB)
-        self.service_socket = self.create_socket(zmq.REP)
-        self.local_info: NodeInfo = {
-            "name": "LancomMaster",
-            "nodeID": utils.create_hash_identifier(),
-            "ip": node_ip,
-            "type": "master",
-            "topicPort": utils.get_zmq_socket_port(self.pub_socket),
-            "topicList": [],
-            "servicePort": utils.get_zmq_socket_port(self.service_socket),
-            "serviceList": [],
-        }
-        self.service_cbs: Dict[str, Callable] = {}
+        super().__init__(
+            "Master",
+            "Master",
+            node_ip,
+            MASTER_TOPIC_PORT,
+            MASTER_SERVICE_PORT,
+        )
 
-    def create_socket(self, socket_type: int) -> zmq.asyncio.Socket:
-        return self.context.socket(socket_type)
-
-
-    def spin_task(self) -> None:
-        logger.info("The node is running...")
-        try:
-            self.loop = asyncio.get_event_loop()  # Get the existing event loop
-            self.running = True
-            self.submit_loop_task(self.service_loop)
-            self.initialize_event_loop()
-            self.loop.run_forever()
-        except KeyboardInterrupt:
-            self.stop_node()
-        except Exception as e:
-            logger.error(f"Unexpected error in thread_task: {e}")
-        finally:
-            logger.info("The node has been stopped")
-
-
-    def stop_node(self):
-        logger.info("Start to stop the node")
-        self.running = False
-        try:
-            if self.loop.is_running():
-                self.loop.call_soon_threadsafe(self.loop.stop)
-        except RuntimeError as e:
-            logger.error(f"One error occurred when stop server: {e}")
-        # self.executor.shutdown(wait=False)
-
-    def submit_loop_task(
-        self,
-        task: Callable,
-        *args,
-    ) -> Optional[concurrent.futures.Future]:
-        if not self.loop:
-            raise RuntimeError("The event loop is not running")
-        return asyncio.run_coroutine_threadsafe(task(*args), self.loop)
-
+    def initialize_event_loop(self):
+        self.submit_loop_task(self.broadcast_loop)
+        self.submit_loop_task(self.nodes_info_publish_loop)
 
     async def broadcast_loop(self):
-        logger.info("The server is broadcasting...")
+        logger.info(
+            f"The Master Node is broadcasting at "
+            f"{self.local_info['ip']}:{DISCOVERY_PORT}"
+        )
         # set up udp socket
         with socket.socket(AF_INET, SOCK_DGRAM) as _socket:
             _socket.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)
@@ -160,10 +118,10 @@ class LanComMaster:
         logger.info("Broadcasting has been stopped")
 
     async def nodes_info_publish_loop(self):
-        self.pub_socket.send_string(
-            f"{dumps(self.local_info)}"
-        )
-
+        while self.running:
+            print(f"Published: {dumps(self.local_info)}")
+            self.pub_socket.send_string(f"{dumps(self.local_info)}")
+            await async_sleep(0.1)
 
     async def service_loop(self):
         logger.info("The service loop is running...")
@@ -202,6 +160,6 @@ class LanComMaster:
         pass
 
 
-def start_master_node_task(node_name: str, node_ip: str) -> None:
-    node = MasterNode(node_name, node_ip)
-    node.
+def start_master_node_task(node_ip: IPAddress) -> None:
+    node = LanComMasterNode(node_ip)
+    node.spin()
