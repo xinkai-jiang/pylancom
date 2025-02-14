@@ -1,11 +1,12 @@
 import zmq
 import zmq.asyncio
+import asyncio
 import struct
 import socket
-from typing import List, Dict, TypedDict, Optional
+from typing import List, Dict, TypedDict, Optional, Tuple
 import enum
-from enum import IntEnum
-from traceback import print_exc
+from enum import Enum
+import traceback
 import uuid
 
 from .log import logger
@@ -25,13 +26,22 @@ MASTER_TOPIC_PORT = int(7721)
 MASTER_SERVICE_PORT = int(7722)
 
 
-class MSG(IntEnum):
-    PING = 0
-    SERVICE_ERROR = 1
-    SERVICE_TIMEOUT = 2
+class MasterRequestType(Enum):
+    PING = "PING"
+    REGISTER_NODE = "REGISTER_NODE"
+    NODE_OFFLINE = "NODE_OFFLINE"
+    REGISTER_TOPIC = "REGISTER_TOPIC"
+    REGISTER_SERVICE = "REGISTER_SERVICE"
+    GET_NODES_INFO = "GET_NODES_INFO"
 
 
-class ComponentType(IntEnum):
+class ServiceStatus(Enum):
+    SUCCESS = b"\x00"
+    ERROR = b"\x01"
+    TIMEOUT = b"\x02"
+
+
+class ComponentType(Enum):
     PUBLISHER = 0
     SUBSCRIBER = 1
     SERVICE = 2
@@ -40,7 +50,7 @@ class ComponentType(IntEnum):
 class ComponentInfo(TypedDict):
     name: str
     componentID: HashIdentifier
-    type: str
+    type: ComponentType
     ip: IPAddress
     port: Port
 
@@ -49,15 +59,18 @@ class NodeInfo(TypedDict):
     name: str
     nodeID: HashIdentifier  # hash code since bytes is not JSON serializable
     ip: IPAddress
-    # port: Port
     type: str
+    port: int
     topicPort: int
     topicList: List[ComponentInfo]
     servicePort: int
     serviceList: List[ComponentInfo]
+    subscriberList: List[ComponentInfo]
 
 
 class ConnectionState(TypedDict):
+    masterID: HashIdentifier
+    timestamp: float
     topic: Dict[TopicName, List[ComponentInfo]]
     service: Dict[ServiceName, ComponentInfo]
 
@@ -127,16 +140,13 @@ def search_for_master_node(
         server_socket.settimeout(timeout)  # Set a timeout
 
         try:
-            print(f"Listening for UDP messages on port {port}...")
-            data, addr = server_socket.recvfrom(1024)  # Receive data (max 1024 bytes)
+            data, addr = server_socket.recvfrom(1024)
             if data:
-                print(f"Received message from {addr[0]}: {data.decode()}")
                 return addr[0]  # Return sender's IP address
         except socket.timeout:
-            print("No message received. Exiting.")
             return None
-        except Exception as e:
-            print(f"Error: {e}")
+        except Exception:
+            traceback.print_exc()
             return None
 
 
@@ -171,3 +181,18 @@ def search_for_master_node(
 #                 print_exc()
 #     logger.info("No master node found, start as master node")
 #     return None
+
+
+async def send_tcp_request(
+    sock: socket.socket, addr: Tuple[IPAddress, Port], message: str
+) -> str:
+    loop = asyncio.get_running_loop()
+    # Connect to the target server
+    await loop.sock_connect(sock, addr)
+    # Send the message (encoded to bytes)
+    await loop.sock_sendall(sock, message.encode("utf-8"))
+    # Wait and receive the response (up to 4096 bytes)
+    response = await loop.sock_recv(sock, 4096)
+    # Close the socket after the transaction
+    sock.close()
+    return response.decode("utf-8")

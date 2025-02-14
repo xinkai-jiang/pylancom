@@ -1,38 +1,48 @@
 from __future__ import annotations
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, Optional, Callable, Awaitable, Union
+from typing import Dict, Optional, List, Callable
+import zmq
 import asyncio
 from asyncio import sleep as async_sleep
 import socket
 from socket import AF_INET, SOCK_DGRAM, SOL_SOCKET, SO_BROADCAST
 import struct
-import zmq.asyncio
 from json import dumps, loads
-import concurrent.futures
 import traceback
+import time
 
+import zmq.asyncio
 
 from .log import logger
-from .utils import DISCOVERY_PORT, MASTER_TOPIC_PORT, MASTER_SERVICE_PORT
+from .utils import DISCOVERY_PORT, MASTER_SERVICE_PORT, MASTER_TOPIC_PORT
 from .utils import IPAddress, HashIdentifier, ServiceName, TopicName
-from .utils import NodeInfo, ConnectionState
+from .utils import NodeInfo, ConnectionState, ComponentInfo
 
 # from .abstract_node import AbstractNode
-from .utils import bmsgsplit
-from .utils import MSG
-from . import utils
+from .utils import bmsgsplit, create_hash_identifier
+from .utils import ServiceStatus
+from .utils import ServiceStatus, MasterRequestType
 from .abstract_node import AbstractNode
+
+__version__ = "0.1.0"
 
 
 class NodesInfoManager:
 
-    def __init__(self, local_info: NodeInfo) -> None:
+    def __init__(self, master_id: HashIdentifier) -> None:
         self.nodes_info: Dict[HashIdentifier, NodeInfo] = {}
-        self.connection_state: ConnectionState = {"topic": {}, "service": {}}
-        # local info is the master node info
-        self.local_info = local_info
-        self.node_id = local_info["nodeID"]
+        self.topics_info: Dict[TopicName, List[ComponentInfo]] = {}
+        self.subscribers_info: Dict[HashIdentifier, List[ComponentInfo]] = {}
+        self.services_info: Dict[ServiceName, ComponentInfo] = {}
+
+        # self.connection_state: ConnectionState = {
+        #     "masterID": local_info["nodeID"],
+        #     "timestamp": time.time(),
+        #     "topic": {},
+        #     "service": {}
+        # }
+        # # local info is the master node info
+        # self.local_info = local_info
+        # self.node_id = local_info["nodeID"]
 
     def get_nodes_info(self) -> Dict[HashIdentifier, NodeInfo]:
         return self.nodes_info
@@ -49,17 +59,17 @@ class NodesInfoManager:
                 return info
         return None
 
-    def register_node(self, info: NodeInfo):
-        node_id = info["nodeID"]
-        if node_id not in self.nodes_info.keys():
-            logger.info(f"Node {info['name']} from " f"{info['ip']} has been launched")
-            topic_state = self.connection_state["topic"]
-            for topic in info["topicList"]:
-                topic_state[topic["name"]].append(topic)
-            service_state = self.connection_state["service"]
-            for service in info["serviceList"]:
-                service_state[service["name"]] = service
-        self.nodes_info[node_id] = info
+    # def register_node(self, info: NodeInfo):
+    #     node_id = info["nodeID"]
+    #     if node_id not in self.nodes_info.keys():
+    #         logger.info(f"Node {info['name']} has been launched")
+    #         topic_state = self.connection_state["topic"]
+    #         for topic in info["topicList"]:
+    #             topic_state[topic["name"]].append(topic)
+    #         service_state = self.connection_state["service"]
+    #         for service in info["serviceList"]:
+    #             service_state[service["name"]] = service
+    #     self.nodes_info[node_id] = info
 
     def update_node(self, info: NodeInfo):
         node_id = info["nodeID"]
@@ -80,86 +90,110 @@ class NodesInfoManager:
                 return info
         return None
 
+    # def get_connection_state(self) -> ConnectionState:
+    #     self.connection_state["timestamp"] = time.time()
+    #     return self.connection_state
 
-class LanComMasterNode(AbstractNode):
+    # def get_connection_state_bytes(self) -> bytes:
+    #     return dumps(self.get_connection_state()).encode()
+
+    def register_node(self, node_info: NodeInfo):
+        self.nodes_info[node_info["nodeID"]] = node_info
+        for topic_info in node_info["topicList"]:
+            self.register_topic(topic_info)
+        for service_info in node_info["serviceList"]:
+            self.register_service(service_info)
+        for subscriber_info in node_info["subscriberList"]:
+            self.register_subscriber(subscriber_info)
+
+    def register_topic(self, topic_info: ComponentInfo):
+        if topic_info["name"] not in self.topics_info.keys():
+            self.topics_info[topic_info["name"]] = []
+            logger.info(f"Topic {topic_info['name']} has been registered")
+        self.topics_info[topic_info["name"]].append(topic_info)
+
+    def register_service(self, service_info: ComponentInfo):
+        if service_info["name"] not in self.services_info.keys():
+            self.services_info[service_info["name"]] = service_info
+            logger.info(f"Service {service_info['name']} has been registered")
+        else:
+            logger.warning(f"Service {service_info['name']} has been updated")
+            self.services_info[service_info["name"]] = service_info
+
+    def register_subscriber(self, subscriber_info: ComponentInfo):
+        # self.nodes_info[node_id]["topicList"].append(subscriber)
+        pass
+
+
+class LanComMaster(AbstractNode):
     def __init__(self, node_ip: IPAddress) -> None:
-        super().__init__(
-            "Master",
-            "Master",
-            node_ip,
-            MASTER_TOPIC_PORT,
-            MASTER_SERVICE_PORT,
-        )
-
-    def initialize_event_loop(self):
-        self.submit_loop_task(self.broadcast_loop)
-        self.submit_loop_task(self.nodes_info_publish_loop)
+        super().__init__(node_ip, MASTER_SERVICE_PORT)
+        self.nodes_info_manager = NodesInfoManager(self.id)
+        self.node_ip = node_ip
 
     async def broadcast_loop(self):
-        logger.info(
-            f"The Master Node is broadcasting at "
-            f"{self.local_info['ip']}:{DISCOVERY_PORT}"
-        )
+        logger.info(f"Master Node is broadcasting at {self.node_ip}")
         # set up udp socket
         with socket.socket(AF_INET, SOCK_DGRAM) as _socket:
             _socket.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)
             # calculate broadcast ip
-            local_info = self.local_info
-            _ip = local_info["ip"]
-            ip_bin = struct.unpack("!I", socket.inet_aton(_ip))[0]
+            ip_bin = struct.unpack("!I", socket.inet_aton(self.node_ip))[0]
             netmask = socket.inet_aton("255.255.255.0")
             netmask_bin = struct.unpack("!I", netmask)[0]
             broadcast_bin = ip_bin | ~netmask_bin & 0xFFFFFFFF
             broadcast_ip = socket.inet_ntoa(struct.pack("!I", broadcast_bin))
             while self.running:
-                msg = f"LancomMaster|version=0.1|{dumps(local_info)}"
+                msg = f"LancomMaster|{__version__}|{self.id}|{self.node_ip}"
                 _socket.sendto(msg.encode(), (broadcast_ip, DISCOVERY_PORT))
                 await async_sleep(0.1)
         logger.info("Broadcasting has been stopped")
 
-    async def nodes_info_publish_loop(self):
+    def initialize_event_loop(self):
+        service_socket = zmq.asyncio.Context().socket(zmq.REP)  # type: ignore
+        services: Dict[str, Callable[[bytes], bytes]] = {
+            MasterRequestType.PING.value: self.ping,
+            MasterRequestType.REGISTER_NODE.value: self.register_node,
+            MasterRequestType.NODE_OFFLINE.value: self.node_offline,
+            MasterRequestType.GET_NODES_INFO.value: self.get_nodes_info,
+        }
+        self.submit_loop_task(self.service_loop, service_socket, services)
+        self.submit_loop_task(self.broadcast_loop)
+        self.submit_loop_task(self.publish_master_state_loop)
+
+    async def publish_master_state_loop(self):
+        pub_socket = zmq.asyncio.Context().socket(zmq.PUB)  # type: ignore
+        pub_socket.bind(f"tcp://{self.node_ip}:{MASTER_TOPIC_PORT}")
         while self.running:
-            print(f"Published: {dumps(self.local_info)}")
-            self.pub_socket.send_string(f"{dumps(self.local_info)}")
+            pub_socket.send_string(self.id)
             await async_sleep(0.1)
 
-    async def service_loop(self):
-        logger.info("The service loop is running...")
-        service_socket = self.service_socket
-        while self.running:
-            bytes_msg = await service_socket.recv_multipart()
-            service_name, request = bmsgsplit(b"".join(bytes_msg))
-            service_name = service_name.decode()
-            # the zmq service socket is blocked and only run one at a time
-            if service_name in self.service_cbs.keys():
-                try:
-                    await self.service_cbs[service_name](request)
-                except asyncio.TimeoutError:
-                    logger.error("Timeout: callback function took too long")
-                    await service_socket.send(MSG.SERVICE_TIMEOUT.value)
-                except Exception as e:
-                    logger.error(
-                        f"One error occurred when processing the Service "
-                        f'"{service_name}": {e}'
-                    )
-                    traceback.print_exc()
-                    await service_socket.send(MSG.SERVICE_ERROR.value)
-            await async_sleep(0.01)
-        logger.info("Service loop has been stopped")
+    def stop_node(self):
+        logger.info("Master is stopping...")
+        return super().stop_node()
 
-    def ping_callback(self, msg: bytes) -> bytes:
-        pass
+    def ping(self, msg: bytes) -> bytes:
+        return str(time.time()).encode()
 
-    def register_node_callback(self, node_info: NodeInfo) -> None:
-        pass
+    def register_node(self, msg: bytes) -> bytes:
+        node_info = loads(msg)
+        self.nodes_info_manager.register_node(node_info)
+        return self.nodes_info_manager.get_connection_state_bytes()
 
-    def update_node_callback(self, node_info: NodeInfo) -> None:
-        pass
+    def node_offline(self, msg: bytes) -> bytes:
+        node_info = loads(msg)
+        self.nodes_info_manager.update_node(node_info)
+        return self.nodes_info_manager.get_connection_state_bytes()
 
-    def node_offline_callback(self, node_id: HashIdentifier) -> None:
-        pass
+    def node_offline(self, msg: bytes) -> bytes:
+        node_id = msg.decode()
+        self.nodes_info_manager.remove_node(node_id)
+        return ServiceStatus.SUCCESS.value
+
+    def get_nodes_info(self, msg: bytes) -> bytes:
+        nodes_info = self.nodes_info_manager.get_nodes_info()
+        return dumps(nodes_info).encode()
 
 
 def start_master_node_task(node_ip: IPAddress) -> None:
-    node = LanComMasterNode(node_ip)
+    node = LanComMaster(node_ip)
     node.spin()

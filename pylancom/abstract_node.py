@@ -1,6 +1,7 @@
 from __future__ import annotations
 import abc
 import multiprocessing as mp
+import socket
 import asyncio
 import zmq
 import zmq.asyncio
@@ -15,49 +16,20 @@ import traceback
 
 from .log import logger
 from .utils import DISCOVERY_PORT
-from .utils import NodeInfo, ComponentType, ConnectionState, ComponentInfo
-from .utils import HashIdentifier
-from .utils import MSG
+from .utils import NodeInfo, ServiceStatus
+from .utils import HashIdentifier, IPAddress, Port
+from .utils import bmsgsplit, create_hash_identifier
 
 from . import utils
 
 
 class AbstractNode(abc.ABC):
 
-    def __init__(
-        self,
-        node_name: str,
-        node_type: str,
-        node_ip: str,
-        pub_port: int = 0,
-        service_port: int = 0
-    ) -> None:
+    def __init__(self, node_ip: IPAddress, socket_port: Port = 0) -> None:
         super().__init__()
-        self.zmq_context: AsyncContext = zmq.asyncio.Context()  # type: ignore
-        self.context = zmq.asyncio.Context()  # type: ignore
-        self.pub_socket = self.create_socket(zmq.PUB)
-        self.pub_socket.bind(f"tcp://{node_ip}:{pub_port}")
-        self.service_socket = self.create_socket(zmq.REP)
-        self.service_socket.bind(f"tcp://{node_ip}:{service_port}")
-        self.local_info: NodeInfo = {
-            "name": node_name,
-            "nodeID": utils.create_hash_identifier(),
-            "ip": node_ip,
-            "type": node_type,
-            "topicPort": utils.get_zmq_socket_port(self.pub_socket),
-            "topicList": [],
-            "servicePort": utils.get_zmq_socket_port(self.service_socket),
-            "serviceList": [],
-        }
-        self.service_cbs: Dict[str, Callable] = {}
-        self.log_node_state()
-
-    def log_node_state(self):
-        for key, value in self.local_info.items():
-            print(f"    {key}: {value}")
-
-    def create_socket(self, socket_type: int) -> zmq.asyncio.Socket:
-        return self.zmq_context.socket(socket_type)
+        self.id = create_hash_identifier()
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.bind((node_ip, socket_port))
 
     def submit_loop_task(
         self,
@@ -73,26 +45,24 @@ class AbstractNode(abc.ABC):
             self.spin_task()
 
     def spin_task(self) -> None:
-        logger.info("The node is running...")
         try:
             self.loop = asyncio.get_event_loop()  # Get the existing event loop
             self.running = True
-            self.submit_loop_task(self.service_loop)
+            self.submit_loop_task(self.tcp_server)
             self.initialize_event_loop()
             self.loop.run_forever()
         except KeyboardInterrupt:
             self.stop_node()
         except Exception as e:
             logger.error(f"Unexpected error in thread_task: {e}")
-        finally:
-            logger.info(f"Node {self.local_info['name']} has been stopped")
+            traceback.print_exc()
+            self.stop_node()
 
     @abc.abstractmethod
     def initialize_event_loop(self):
         raise NotImplementedError
 
     def stop_node(self):
-        logger.info("Start to stop the node")
         self.running = False
         try:
             if self.loop.is_running():
@@ -101,28 +71,71 @@ class AbstractNode(abc.ABC):
             logger.error(f"One error occurred when stop server: {e}")
         # self.executor.shutdown(wait=False)
 
-    async def service_loop(self):
+    async def service_loop(
+        self,
+        service_socket: zmq.asyncio.Socket,
+        services: Dict[str, Callable[[bytes], bytes]],
+    ) -> None:
         logger.info("The service loop is running...")
-        service_socket = self.service_socket
         while self.running:
             bytes_msg = await service_socket.recv_multipart()
-            service_name, request = split_byte(b"".join(bytes_msg))
+            service_name, request = bmsgsplit(b"".join(bytes_msg))
+            service_name = service_name.decode()
             # the zmq service socket is blocked and only run one at a time
-            if service_name in self.service_cbs.keys():
+            if service_name in services.keys():
                 try:
-                    await self.service_cbs[service_name](request)
+                    result = services[service_name](request)
+                    await service_socket.send(result)
                 except asyncio.TimeoutError:
                     logger.error("Timeout: callback function took too long")
-                    await service_socket.send(MSG.SERVICE_TIMEOUT.value)
+                    await service_socket.send(ServiceStatus.TIMEOUT.value)
                 except Exception as e:
                     logger.error(
                         f"One error occurred when processing the Service "
                         f'"{service_name}": {e}'
                     )
                     traceback.print_exc()
-                    await service_socket.send(MSG.SERVICE_ERROR.value)
+                    await service_socket.send(ServiceStatus.ERROR.value)
             await async_sleep(0.01)
         logger.info("Service loop has been stopped")
+
+    async def tcp_server(self):
+        print("TCP server started")
+        try:
+            server = await asyncio.start_server(self.handle_request, sock=self.socket)
+            addr = server.sockets[0].getsockname()
+            logger.info(f"TCP server started on {addr}")
+            async with server:
+                await server.serve_forever()
+        except Exception as e:
+            logger.error(f"Error when starting TCP server: {e}")
+            traceback.print_exc()
+
+    async def handle_request(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ):
+        """
+        Handle incoming TCP client connections and echo received messages.
+        """
+        addr = writer.get_extra_info("peername")
+        logger.info(f"New connection from {addr}")
+
+        while True:
+            try:
+                data = await reader.read(1024)  # Read up to 1024 bytes
+                if data:
+                    logger.info(f"Connection closed by {addr}")
+                    break
+                logger.info(f"Received data from {addr}: {data.decode()}")
+                writer.write(data)  # Echo the received data
+                await writer.drain()  # Ensure the data is sent
+            except Exception as e:
+                logger.error(f"Error with client {addr}: {e}")
+                traceback.print_exc()
+            finally:
+                writer.close()
+                await writer.wait_closed()
+                logger.info(f"Connection with {addr} closed")
 
 
 # class AbstractComponent(abc.ABC):
