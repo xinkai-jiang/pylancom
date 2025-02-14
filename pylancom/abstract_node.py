@@ -16,9 +16,9 @@ import traceback
 
 from .log import logger
 from .utils import DISCOVERY_PORT
-from .utils import NodeInfo, ServiceStatus
+from .utils import NodeInfo, ResponseType
 from .utils import HashIdentifier, IPAddress, Port
-from .utils import bmsgsplit, create_hash_identifier
+from .utils import bmsgsplit, create_hash_identifier, bmsgsplit2str
 
 from . import utils
 
@@ -29,7 +29,10 @@ class AbstractNode(abc.ABC):
         super().__init__()
         self.id = create_hash_identifier()
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.socket.bind((node_ip, socket_port))
+        self.socket.setblocking(False)
+        self.socket_service_cb: Dict[str, Callable[[str], str]] = {}
 
     def submit_loop_task(
         self,
@@ -67,6 +70,7 @@ class AbstractNode(abc.ABC):
         try:
             if self.loop.is_running():
                 self.loop.call_soon_threadsafe(self.loop.stop)
+            self.socket.close()
         except RuntimeError as e:
             logger.error(f"One error occurred when stop server: {e}")
         # self.executor.shutdown(wait=False)
@@ -88,28 +92,32 @@ class AbstractNode(abc.ABC):
                     await service_socket.send(result)
                 except asyncio.TimeoutError:
                     logger.error("Timeout: callback function took too long")
-                    await service_socket.send(ServiceStatus.TIMEOUT.value)
+                    await service_socket.send(ResponseType.TIMEOUT.value)
                 except Exception as e:
                     logger.error(
                         f"One error occurred when processing the Service "
                         f'"{service_name}": {e}'
                     )
                     traceback.print_exc()
-                    await service_socket.send(ServiceStatus.ERROR.value)
+                    await service_socket.send(ResponseType.ERROR.value)
             await async_sleep(0.01)
         logger.info("Service loop has been stopped")
 
     async def tcp_server(self):
-        print("TCP server started")
         try:
             server = await asyncio.start_server(self.handle_request, sock=self.socket)
             addr = server.sockets[0].getsockname()
             logger.info(f"TCP server started on {addr}")
             async with server:
                 await server.serve_forever()
+        except KeyboardInterrupt:
+            logger.debug("TCP server is stopped")
         except Exception as e:
             logger.error(f"Error when starting TCP server: {e}")
             traceback.print_exc()
+        finally:
+            server.close()
+            await server.wait_closed()
 
     async def handle_request(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
@@ -118,24 +126,25 @@ class AbstractNode(abc.ABC):
         Handle incoming TCP client connections and echo received messages.
         """
         addr = writer.get_extra_info("peername")
-        logger.info(f"New connection from {addr}")
+        # logger.info(f"New connection from {addr}")
+        # while True:
+        try:
+            data = await reader.read(1024)  # Read up to 1024 bytes
+            # logger.info(f"Received data from {addr}: {data.decode()}")
+            service_name, request = bmsgsplit2str(data)
+            response = ResponseType.ERROR.value
+            if service_name in self.socket_service_cb.keys():
+                response = self.socket_service_cb[service_name](request)
+            writer.write(response.encode())
+            await writer.drain()
+        except Exception as e:
+            logger.error(f"Error with client {addr}: {e}")
+            traceback.print_exc()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            # logger.info(f"Connection with {addr} closed")
 
-        while True:
-            try:
-                data = await reader.read(1024)  # Read up to 1024 bytes
-                if data:
-                    logger.info(f"Connection closed by {addr}")
-                    break
-                logger.info(f"Received data from {addr}: {data.decode()}")
-                writer.write(data)  # Echo the received data
-                await writer.drain()  # Ensure the data is sent
-            except Exception as e:
-                logger.error(f"Error with client {addr}: {e}")
-                traceback.print_exc()
-            finally:
-                writer.close()
-                await writer.wait_closed()
-                logger.info(f"Connection with {addr} closed")
 
 
 # class AbstractComponent(abc.ABC):

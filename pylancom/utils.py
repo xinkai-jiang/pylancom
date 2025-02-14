@@ -35,10 +35,14 @@ class MasterRequestType(Enum):
     GET_NODES_INFO = "GET_NODES_INFO"
 
 
-class ServiceStatus(Enum):
-    SUCCESS = b"\x00"
-    ERROR = b"\x01"
-    TIMEOUT = b"\x02"
+def create_request(request_type: str, data: str) -> str:
+    return f"{request_type}|{data}"
+
+
+class ResponseType(Enum):
+    SUCCESS = "SUCCESS"
+    ERROR = "ERROR"
+    TIMEOUT = "TIMEOUT"
 
 
 class ComponentType(Enum):
@@ -112,6 +116,10 @@ def get_zmq_socket_port(socket: zmq.asyncio.Socket) -> int:
 
 def bmsgsplit(bytes_msg: bytes) -> List[bytes]:
     return bytes_msg.split(b"|", 1)
+
+
+def bmsgsplit2str(bytes_msg: bytes) -> List[str]:
+    return bytes_msg.decode().split("|", 1)
 
 
 # def split_byte_to_str(bytes_msg: bytes) -> List[str]:
@@ -194,5 +202,5 @@ async def send_tcp_request(
     # Wait and receive the response (up to 4096 bytes)
     response = await loop.sock_recv(sock, 4096)
     # Close the socket after the transaction
-    sock.close()
+    # sock.close()
     return response.decode("utf-8")

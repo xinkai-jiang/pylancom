@@ -19,9 +19,9 @@ from .utils import search_for_master_node
 from .utils import ConnectionState, MasterRequestType
 from .utils import TopicName
 from .utils import DISCOVERY_PORT
-from .utils import NodeInfo, ServiceStatus
+from .utils import NodeInfo, ResponseType
 from .utils import HashIdentifier
-from .utils import bmsgsplit, send_tcp_request
+from .utils import bmsgsplit, send_tcp_request, create_request
 from . import utils
 
 
@@ -132,9 +132,11 @@ class LanComNode(AbstractNode):
 
     async def connect_to_master(self) -> None:
         logger.debug(f"Connecting to master node at {self.master_ip}")
-        loop = asyncio.get_running_loop()
         addr = (self.master_ip, MASTER_SERVICE_PORT)
-        await send_tcp_request(self.node_socket, addr, "Hello")
+        request = create_request(
+            MasterRequestType.REGISTER_NODE.value, dumps(self.local_info)
+        )
+        await send_tcp_request(self.node_socket, addr, request)
 
     # def disconnect_from_master(self) -> None:
     #     pass

@@ -19,8 +19,7 @@ from .utils import NodeInfo, ConnectionState, ComponentInfo
 
 # from .abstract_node import AbstractNode
 from .utils import bmsgsplit, create_hash_identifier
-from .utils import ServiceStatus
-from .utils import ServiceStatus, MasterRequestType
+from .utils import MasterRequestType, ResponseType
 from .abstract_node import AbstractNode
 
 __version__ = "0.1.0"
@@ -98,6 +97,9 @@ class NodesInfoManager:
     #     return dumps(self.get_connection_state()).encode()
 
     def register_node(self, node_info: NodeInfo):
+        if node_info["nodeID"] in self.nodes_info.keys():
+            logger.warning(f"Node {node_info['name']} has been updated")
+        logger.info(f"Node {node_info['name']} is launched")
         self.nodes_info[node_info["nodeID"]] = node_info
         for topic_info in node_info["topicList"]:
             self.register_topic(topic_info)
@@ -149,14 +151,12 @@ class LanComMaster(AbstractNode):
         logger.info("Broadcasting has been stopped")
 
     def initialize_event_loop(self):
-        service_socket = zmq.asyncio.Context().socket(zmq.REP)  # type: ignore
-        services: Dict[str, Callable[[bytes], bytes]] = {
+        self.socket_service_cb: Dict[str, Callable[[str], str]] = {
             MasterRequestType.PING.value: self.ping,
             MasterRequestType.REGISTER_NODE.value: self.register_node,
-            MasterRequestType.NODE_OFFLINE.value: self.node_offline,
-            MasterRequestType.GET_NODES_INFO.value: self.get_nodes_info,
+            # MasterRequestType.NODE_OFFLINE.value: self.node_offline,
+            # MasterRequestType.GET_NODES_INFO.value: self.get_nodes_info,
         }
-        self.submit_loop_task(self.service_loop, service_socket, services)
         self.submit_loop_task(self.broadcast_loop)
         self.submit_loop_task(self.publish_master_state_loop)
 
@@ -168,21 +168,16 @@ class LanComMaster(AbstractNode):
             await async_sleep(0.1)
 
     def stop_node(self):
-        logger.info("Master is stopping...")
-        return super().stop_node()
+        super().stop_node()
+        logger.info("Master is stopped")
 
-    def ping(self, msg: bytes) -> bytes:
-        return str(time.time()).encode()
+    def ping(self, msg: str) -> str:
+        return str(time.time())
 
-    def register_node(self, msg: bytes) -> bytes:
-        node_info = loads(msg)
-        self.nodes_info_manager.register_node(node_info)
-        return self.nodes_info_manager.get_connection_state_bytes()
-
-    def node_offline(self, msg: bytes) -> bytes:
-        node_info = loads(msg)
-        self.nodes_info_manager.update_node(node_info)
-        return self.nodes_info_manager.get_connection_state_bytes()
+    def register_node(self, msg: str) -> str:
+        mode_info: NodeInfo = loads(msg)
+        self.nodes_info_manager.register_node(mode_info)
+        return ResponseType.SUCCESS.value
 
     def node_offline(self, msg: bytes) -> bytes:
         node_id = msg.decode()
