@@ -3,84 +3,71 @@ import zmq.asyncio
 import asyncio
 import struct
 import socket
-from typing import List, Dict, TypedDict, Optional, Tuple
-import enum
-from enum import Enum
+from typing import List, Dict, Optional, Tuple
 import traceback
 import uuid
+from json import dumps, loads
 
 from .log import logger
-
-IPAddress = str
-Port = int
-TopicName = str
-ServiceName = str
-AsyncSocket = zmq.asyncio.Socket
-HashIdentifier = str
+from .type import IPAddress, Port, HashIdentifier, AsyncSocket
+from .config import DISCOVERY_PORT
 
 
-BROADCAST_INTERVAL = 0.5
-HEARTBEAT_INTERVAL = 0.2
-DISCOVERY_PORT = int(7720)
-MASTER_TOPIC_PORT = int(7721)
-MASTER_SERVICE_PORT = int(7722)
-
-
-class MasterRequestType(Enum):
-    PING = "PING"
-    REGISTER_NODE = "REGISTER_NODE"
-    NODE_OFFLINE = "NODE_OFFLINE"
-    REGISTER_TOPIC = "REGISTER_TOPIC"
-    REGISTER_SERVICE = "REGISTER_SERVICE"
-    GET_NODES_INFO = "GET_NODES_INFO"
+def create_hash_identifier() -> HashIdentifier:
+    return str(uuid.uuid4())
 
 
 def create_request(request_type: str, data: str) -> str:
     return f"{request_type}|{data}"
 
 
-class ResponseType(Enum):
-    SUCCESS = "SUCCESS"
-    ERROR = "ERROR"
-    TIMEOUT = "TIMEOUT"
+def msgs_join(msgs: List[str]) -> str:
+    return "|".join(msgs)
 
 
-class ComponentType(Enum):
-    PUBLISHER = 0
-    SUBSCRIBER = 1
-    SERVICE = 2
+def byte2str(byte_msg: bytes) -> str:
+    return byte_msg.decode()
 
 
-class ComponentInfo(TypedDict):
-    name: str
-    componentID: HashIdentifier
-    type: ComponentType
-    ip: IPAddress
-    port: Port
+def str2byte(str_msg: str) -> bytes:
+    return str_msg.encode()
 
 
-class NodeInfo(TypedDict):
-    name: str
-    nodeID: HashIdentifier  # hash code since bytes is not JSON serializable
-    ip: IPAddress
-    type: str
-    port: int
-    topicPort: int
-    topicList: List[ComponentInfo]
-    servicePort: int
-    serviceList: List[ComponentInfo]
-    subscriberList: List[ComponentInfo]
+def dict2byte(dict_msg: Dict) -> bytes:
+    return dumps(dict_msg).encode()
 
 
-class ConnectionState(TypedDict):
-    masterID: HashIdentifier
-    timestamp: float
-    topic: Dict[TopicName, List[ComponentInfo]]
-    service: Dict[ServiceName, ComponentInfo]
+def byte2dict(byte_msg: bytes) -> Dict:
+    return loads(byte_msg.decode())
 
 
-def create_hash_identifier() -> HashIdentifier:
-    return str(uuid.uuid4())
+def create_udp_socket() -> socket.socket:
+    return socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+
+def get_zmq_socket_port(socket: zmq.asyncio.Socket) -> int:
+    endpoint: bytes = socket.getsockopt(zmq.LAST_ENDPOINT)  # type: ignore
+    return int(endpoint.decode().split(":")[-1])
+
+
+def bmsgsplit(bytes_msg: bytes, separator: bytes = b"|", num: int = 1) -> List[bytes]:
+    return bytes_msg.split(separator, num)
+
+
+def bmsgsplit2str(bytes_msg: bytes, separator: str = "|", num: int = 1) -> List[str]:
+    return bytes_msg.decode().split(separator, num)
+
+
+def strmsgsplit(str_msg: str, separator: str = "|", num: int = 1) -> List[str]:
+    return str_msg.split(separator, num)
+
+
+# def split_byte_to_str(bytes_msg: bytes) -> List[str]:
+#     return [item.decode() for item in split_byte(bytes_msg)]
+
+
+# def split_str(str_msg: str) -> List[str]:
+#     return str_msg.split("|", 1)
 
 
 async def send_request(msg: str, addr: str, context: zmq.asyncio.Context) -> str:
@@ -98,36 +85,11 @@ async def send_request(msg: str, addr: str, context: zmq.asyncio.Context) -> str
     return result
 
 
-# def calculate_broadcast_addr(ip_addr: IPAddress) -> IPAddress:
-#     ip_bin = struct.unpack("!I", socket.inet_aton(ip_addr))[0]
-#     netmask_bin = struct.unpack("!I", socket.inet_aton("255.255.255.0"))[0]
-#     broadcast_bin = ip_bin | ~netmask_bin & 0xFFFFFFFF
-#     return socket.inet_ntoa(struct.pack("!I", broadcast_bin))
-
-
-def create_udp_socket() -> socket.socket:
-    return socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-
-def get_zmq_socket_port(socket: zmq.asyncio.Socket) -> int:
-    endpoint: bytes = socket.getsockopt(zmq.LAST_ENDPOINT)  # type: ignore
-    return int(endpoint.decode().split(":")[-1])
-
-
-def bmsgsplit(bytes_msg: bytes) -> List[bytes]:
-    return bytes_msg.split(b"|", 1)
-
-
-def bmsgsplit2str(bytes_msg: bytes) -> List[str]:
-    return bytes_msg.decode().split("|", 1)
-
-
-# def split_byte_to_str(bytes_msg: bytes) -> List[str]:
-#     return [item.decode() for item in split_byte(bytes_msg)]
-
-
-# def split_str(str_msg: str) -> List[str]:
-#     return str_msg.split("|", 1)
+def calculate_broadcast_addr(ip_addr: IPAddress) -> IPAddress:
+    ip_bin = struct.unpack("!I", socket.inet_aton(ip_addr))[0]
+    netmask_bin = struct.unpack("!I", socket.inet_aton("255.255.255.0"))[0]
+    broadcast_bin = ip_bin | ~netmask_bin & 0xFFFFFFFF
+    return socket.inet_ntoa(struct.pack("!I", broadcast_bin))
 
 
 def search_for_master_node(
@@ -157,42 +119,9 @@ def search_for_master_node(
             traceback.print_exc()
             return None
 
-
-# def search_for_master_node(
-#     local_ip: Optional[IPAddress] = None,
-#     search_time: int = 5,
-#     time_out: float = 0.1
-# ) -> Optional[Tuple[IPAddress, str]]:
-#     if local_ip is not None:
-#         broadcast_ip = calculate_broadcast_addr(local_ip)
-#     else:
-#         broadcast_ip = "255.255.255.255"
-#     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as _socket:
-#         # wait for response
-#         _socket.bind(("0.0.0.0", 0))
-#         _socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-#         for _ in range(search_time):
-#             _socket.sendto(
-#                 EchoHeader.PING.value, (broadcast_ip, DISCOVERY_PORT)
-#             )
-#             _socket.settimeout(time_out)
-#             try:
-#                 data, addr = _socket.recvfrom(1024)
-#                 logger.info(f"Find a master node at {addr[0]}:{addr[1]}")
-#                 return addr[0], data.decode()
-#             except socket.timeout:
-#                 continue
-#             except KeyboardInterrupt:
-#                 break
-#             except Exception as e:
-#                 logger.error(f"Error when searching for master node: {e}")
-#                 print_exc()
-#     logger.info("No master node found, start as master node")
-#     return None
-
-
-async def send_tcp_request(
-    sock: socket.socket, addr: Tuple[IPAddress, Port], message: str
+# TODO: use zmq instead of socket
+async def send_request_async(
+    addr: Tuple[IPAddress, Port], message: str
 ) -> str:
     loop = asyncio.get_running_loop()
     # Connect to the target server
@@ -204,3 +133,19 @@ async def send_tcp_request(
     # Close the socket after the transaction
     # sock.close()
     return response.decode("utf-8")
+
+
+def send_tcp_request(addr: Tuple[IPAddress, Port], message: str) -> str:
+    """
+    Synchronously sends a TCP request to the specified address using a blocking socket,
+    utilizing a context manager to ensure proper resource cleanup.
+
+    :param addr: A tuple (IP address, port) to connect to.
+    :param message: The message to send.
+    :return: The response received from the server as a string.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.connect(addr)
+        sock.sendall(message.encode("utf-8"))
+        response = sock.recv(4096)
+        return response.decode("utf-8")
