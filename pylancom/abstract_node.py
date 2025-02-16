@@ -3,6 +3,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import concurrent.futures
+import threading
 import traceback
 from typing import Any, Callable, Dict, Union
 
@@ -48,6 +49,9 @@ class AbstractNode(abc.ABC):
     def spin(self, block: bool = True) -> None:
         if block:
             self.spin_task()
+        else:
+            thread = threading.Thread(target=self.spin_task, daemon=True)
+            thread.start()
 
     def spin_task(self) -> None:
         try:
@@ -88,7 +92,6 @@ class AbstractNode(abc.ABC):
         service_socket: zmq.asyncio.Socket,
         services: Dict[str, Callable[[bytes], bytes]],
     ) -> None:
-        logger.info("The service loop is running...")
         while self.running:
             bytes_msg = await service_socket.recv_multipart()
             service_name, request = bmsgsplit(b"".join(bytes_msg))

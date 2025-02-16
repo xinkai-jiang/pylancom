@@ -24,6 +24,7 @@ from .type import (
     ComponentInfo,
     MasterReqType,
     NodeInfo,
+    NodeReqType,
     ResponseType,
     ServiceName,
     TopicName,
@@ -90,34 +91,18 @@ class NodesInfoManager:
     def get_subscribers(self) -> Dict[HashIdentifier, List[ComponentInfo]]:
         return self.subscribers_info
 
-    # def get_connection_state(self) -> ConnectionState:
-    #     self.connection_state["timestamp"] = time.time()
-    #     return self.connection_state
-
-    # def get_connection_state_bytes(self) -> bytes:
-    #     return dumps(self.get_connection_state()).encode()
-
     def register_node(self, node_info: NodeInfo):
         if node_info["nodeID"] in self.nodes_info.keys():
             logger.warning(f"Node {node_info['name']} has been updated")
         logger.info(f"Node {node_info['name']} is launched")
         self.nodes_info[node_info["nodeID"]] = node_info
-        for topic_info in node_info["topicList"]:
-            self.register_topic(topic_info)
-        for service_info in node_info["serviceList"]:
-            self.register_service(service_info)
-        for subscriber_info in node_info["subscriberList"]:
-            self.register_subscriber(subscriber_info)
 
-    def register_topic(self, topic_info: ComponentInfo):
+    def register_topic(self, topic_info: ComponentInfo) -> None:
         topic_name = topic_info["name"]
         if topic_name not in self.topics_info.keys():
             self.topics_info[topic_name] = []
             logger.info(f"Topic {topic_info['name']} has been registered")
         self.topics_info[topic_name].append(topic_info)
-        if topic_name not in self.subscribers_info.keys():
-            # TODO: send connection request to all the subscribers
-            pass
 
     def register_service(self, service_info: ComponentInfo):
         if service_info["name"] not in self.services_info.keys():
@@ -187,21 +172,27 @@ class LanComMaster(AbstractNode):
     def register_node(self, msg: bytes) -> bytes:
         node_info: NodeInfo = loads(bytes2str(msg))
         self.nodes_info_manager.register_node(node_info)
-        # TODO: send connection request to all the subscribers
-        # for subscriber in node_info["subscriberList"]:
-        #     topic_name = subscriber["name"]
-        #     topics_info = self.nodes_info_manager.get_topics()
-        #     if topic_name not in topics_info:
-        #         continue
-        #     for topic_info in topics_info[topic_name]:
-        #         self.submit_loop_task(
-        #             self.send_request,
-        #             False,
-        #             NodeReqType.UPDATE_SUBSCRIBER.value,
-        #             topic_info["ip"],
-        #             topic_info["port"],
-        #             dumps(topic_info),
-        #         )
+        for topic_info in node_info["topicList"]:
+            self.nodes_info_manager.register_topic(topic_info)
+            if (
+                topic_info["name"]
+                not in self.nodes_info_manager.get_topics().keys()
+            ):
+                continue
+            for publisher_info in topics:
+                self.submit_loop_task(
+                    self.send_request,
+                    False,
+                    NodeReqType.UPDATE_SUBSCRIBER.value,
+                    node_info["ip"],
+                    node_info["port"],
+                    dumps(topic_info),
+                )
+            print(node_info)
+        for service_info in node_info["serviceList"]:
+            self.nodes_info_manager.register_service(service_info)
+        for subscriber_info in node_info["subscriberList"]:
+            self.nodes_info_manager.register_subscriber(subscriber_info)
         return str2bytes(dumps(self.nodes_info_manager.get_topics()))
 
     def node_offline(self, msg: bytes) -> bytes:

@@ -83,13 +83,13 @@ class LanComNode(AbstractNode):
         self.submit_loop_task(
             self.service_loop, False, self.service_socket, self.service_cbs
         )
-        self.submit_loop_task(self.update_master_state_loop, False)
-        self.socket_service_cb: Dict[str, Callable[[str], str]] = {
-            # NodeReqType.PING.value: self.ping,
+        node_service_cb: Dict[str, Callable[[str], str]] = {
             NodeReqType.UPDATE_SUBSCRIBER.value: self.update_subscriber,
-            # LanComSocketReqType.NODE_OFFLINE.value: self.node_offline,
-            # LanComSocketReqType.GET_NODES_INFO.value: self.get_nodes_info,
         }
+        self.submit_loop_task(
+            self.service_loop, False, self.node_socket, node_service_cb
+        )
+        self.submit_loop_task(self.update_master_state_loop, False)
 
     def spin_task(self) -> None:
         logger.info(f"Node {self.local_info['name']} is running...")
@@ -129,22 +129,15 @@ class LanComNode(AbstractNode):
                 continue
             for topic_info in publisher_list:
                 self.subscribe_topic(topic_name, topic_info)
-        # for topic_name in self.sub_sockets.keys():
-        #     if topic_name not in state["topic"].keys():
-        #         for socket in self.sub_sockets[topic_name]:
-        #             socket.close()
-        #         self.sub_sockets.pop(topic_name)
-        # self.connection_state = state
 
     def update_subscriber(self, msg: str) -> str:
-        info: ComponentInfo = utils.loads(msg)
-        self.subscribe_topic(info["name"], info)
+        publisher_info: ComponentInfo = utils.loads(msg)
+        self.subscribe_topic(publisher_info["name"], publisher_info)
         return ResponseType.SUCCESS.value
 
     def subscribe_topic(
         self, topic_name: TopicName, topic_info: ComponentInfo
     ) -> None:
-        # print(f"Subscribing to topic {topic_name}")
         if topic_name not in self.sub_sockets.keys():
             logger.warning(
                 f"Master sending a wrong subscription request for {topic_name}"
@@ -152,6 +145,10 @@ class LanComNode(AbstractNode):
             return
         for _socket in self.sub_sockets[topic_name]:
             _socket.connect(f"tcp://{topic_info['ip']}:{topic_info['port']}")
+        logger.info(
+            f"Subscribers from Node {self.local_info['name']} "
+            f"have been subscribed to topic {topic_name}"
+        )
 
     async def send_node_request_to_master(
         self, request_type: str, message: str
@@ -159,10 +156,6 @@ class LanComNode(AbstractNode):
         return await self.send_request(
             request_type, self.master_ip, MASTER_SERVICE_PORT, message
         )
-
-    # def disconnect_from_master(self) -> None:
-    #     pass
-    # self.disconnect_from_node(self.master_ip, MASTER_TOPIC_PORT)
 
 
 def start_master_node(node_ip: str) -> LanComMaster:

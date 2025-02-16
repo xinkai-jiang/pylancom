@@ -41,6 +41,7 @@ class AbstractComponent(abc.ABC):
         self.info: ComponentInfo = {
             "name": self.name,
             "componentID": create_hash_identifier(),
+            "nodeID": self.node.local_info["nodeID"],
             "type": component_type,
             "ip": self.node.local_info["ip"],
             "port": 0,

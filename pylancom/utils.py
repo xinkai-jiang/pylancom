@@ -1,3 +1,4 @@
+import asyncio
 import socket
 import struct
 import traceback
@@ -126,19 +127,38 @@ def search_for_master_node(
             return None
 
 
-async def send_request_async(
-    sock: zmq.asyncio.Socket, addr: str, message: str
-) -> str:
-    """
-    Asynchronously sends a request via a ZeroMQ socket using asyncio.
+# async def send_request_async(
+#     sock: zmq.asyncio.Socket, addr: str, message: str
+# ) -> str:
+#     """
+#     Asynchronously sends a request via a ZeroMQ socket using asyncio.
 
-    :param sock: A zmq.asyncio.Socket instance.
-    :param addr: The address to connect to (e.g., "tcp://127.0.0.1:5555").
-    :param message: The message to send.
-    :return: The response received from the server as a string.
-    """
-    sock.connect(addr)
-    await sock.send_string(message)
-    response = await sock.recv_string()
-    sock.disconnect(addr)
-    return response
+#     :param sock: A zmq.asyncio.Socket instance.
+#     :param addr: The address to connect to (e.g., "tcp://127.0.0.1:5555").
+#     :param message: The message to send.
+#     :return: The response received from the server as a string.
+#     """
+#     sock.connect(addr)
+#     await sock.send_string(message)
+#     response = await sock.recv_string()
+#     sock.disconnect(addr)
+#     return response
+
+
+async def send_request_async(
+    sock: zmq.asyncio.Socket, addr: str, message: str, timeout: float = 5.0
+) -> str:
+    try:
+        sock.connect(addr)
+        # Send the message; you can also wrap this in wait_for if needed.
+        await sock.send_string(message)
+
+        # Wait for a response with a timeout.
+        response = await asyncio.wait_for(sock.recv_string(), timeout=timeout)
+        return response
+    except asyncio.TimeoutError as e:
+        raise asyncio.TimeoutError(
+            f"Request timed out after {timeout} seconds."
+        ) from e
+    finally:
+        sock.disconnect(addr)

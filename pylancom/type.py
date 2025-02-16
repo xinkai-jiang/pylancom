@@ -43,6 +43,7 @@ class ResponseType(Enum):
 class ComponentInfo(TypedDict):
     name: str
     componentID: HashIdentifier
+    nodeID: HashIdentifier
     type: ComponentType
     ip: IPAddress
     port: Port
