@@ -1,22 +1,24 @@
 from __future__ import annotations
+
 import abc
-from typing import Dict, Callable, Type, TypeVar, cast, Union
-import asyncio
-from asyncio import sleep as async_sleep
+import traceback
+from json import dumps
+from typing import Callable, Dict, Type, Union, cast
+
 import zmq
 import zmq.asyncio
-import time
-from json import dumps
-import traceback
 
+from . import utils
 from .lancom_node import LanComNode
 from .log import logger
-from .type import IPAddress, TopicName, ServiceName, HashIdentifier, NodeInfo
-from .type import AsyncSocket
-from .config import DISCOVERY_PORT
-from .type import ComponentInfo, ComponentType, ComponentTypeEnum
-from .utils import get_zmq_socket_port, create_hash_identifier
-from . import utils
+from .type import (
+    AsyncSocket,
+    ComponentInfo,
+    ComponentType,
+    ComponentTypeEnum,
+    HashIdentifier,
+)
+from .utils import create_hash_identifier, get_zmq_socket_port
 
 
 class AbstractComponent(abc.ABC):
@@ -168,7 +170,10 @@ MessageT = Union[bytes, str, dict]
 # TODO: test this class
 class Subscriber(AbstractComponent):
     def __init__(
-        self, topic_name: str, msg_type: Type[MessageT], callback: Callable[[MessageT], None]
+        self,
+        topic_name: str,
+        msg_type: Type[MessageT],
+        callback: Callable[[MessageT], None],
     ):
         super().__init__(topic_name, ComponentTypeEnum.SUBSCRIBER.value, False)
         self.socket = self.node.create_socket(zmq.SUB)
@@ -231,7 +236,9 @@ class Subscriber(AbstractComponent):
                 # Invoke the callback
                 self.callback(self.decoder(msg))
             except Exception as e:
-                logger.error(f"Error in subscriber of topic '{self.name}': {e}")
+                logger.error(
+                    f"Error in subscriber of topic '{self.name}': {e}"
+                )
                 traceback.print_exc()
 
     def on_shutdown(self) -> None:
@@ -244,7 +251,6 @@ ResponseT = Union[bytes, str, dict]
 
 
 class Service(AbstractComponent):
-
     def __init__(
         self,
         service_name: str,

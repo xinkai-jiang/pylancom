@@ -1,5 +1,6 @@
 import logging
-from colorama import init, Fore
+
+from colorama import Fore, init
 
 init(autoreset=True)
 
@@ -16,6 +17,7 @@ class CustomLogger(logging.Logger):
 
 class CustomFormatter(logging.Formatter):
     """Custom log formatter that adds colors"""
+
     FORMAT = "[%(asctime)s] [%(levelname)s] %(message)s"
 
     FORMATS = {

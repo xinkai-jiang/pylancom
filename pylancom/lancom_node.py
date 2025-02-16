@@ -1,27 +1,32 @@
 from __future__ import annotations
-import zmq
-from zmq.asyncio import Context as AsyncContext
+
+import multiprocessing as mp
 import socket
+import traceback
 from asyncio import sleep as async_sleep
 from json import dumps
-from typing import Dict, List, Optional, Callable, Awaitable
-import multiprocessing as mp
-import traceback
-import zmq.asyncio
+from typing import Awaitable, Callable, Dict, List, Optional
 
-from .lancom_master import LanComMaster
-from .abstract_node import AbstractNode
-from .log import logger
-from .config import MASTER_TOPIC_PORT, MASTER_SERVICE_PORT
-from .utils import search_for_master_node
-from .utils import send_tcp_request_async, create_request
-from .type import MasterSocketReqType, NodeSocketReqType
-from .type import NodeInfo, ComponentInfo, ResponseType
+import zmq
+import zmq.asyncio
+from zmq.asyncio import Context as AsyncContext
+
 from . import utils
+from .abstract_node import AbstractNode
+from .config import MASTER_SERVICE_PORT, MASTER_TOPIC_PORT
+from .lancom_master import LanComMaster
+from .log import logger
+from .type import (
+    ComponentInfo,
+    MasterSocketReqType,
+    NodeInfo,
+    NodeSocketReqType,
+    ResponseType,
+)
+from .utils import create_request, search_for_master_node
 
 
 class LanComNode(AbstractNode):
-
     instance: Optional[LanComNode] = None
 
     def __init__(
@@ -78,7 +83,9 @@ class LanComNode(AbstractNode):
                 await self.update_master_state(message)
                 await async_sleep(0.01)
         except Exception as e:
-            logger.error(f"Error occurred in update_connection_state_loop: {e}")
+            logger.error(
+                f"Error occurred in update_connection_state_loop: {e}"
+            )
             traceback.print_exc()
 
     # async def service_loop(self):

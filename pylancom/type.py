@@ -1,8 +1,8 @@
+from enum import Enum
+from typing import Dict, List, TypedDict
+
 import zmq
 import zmq.asyncio
-from typing import List, Dict, TypedDict
-from enum import Enum
-
 
 IPAddress = str
 Port = int

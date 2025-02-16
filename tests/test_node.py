@@ -1,12 +1,13 @@
+from utils import random_name
+
 import pylancom
 from pylancom.component import Publisher, Service, Subscriber
-
-from utils import random_name
 
 
 def service_callback(msg: str) -> str:
     print(msg)
     return msg
+
 
 def subscriber_callback(msg: str) -> None:
     print(msg)

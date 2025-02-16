@@ -1,16 +1,17 @@
-import zmq
-import zmq.asyncio
 import asyncio
-import struct
 import socket
-from typing import List, Dict, Optional, Tuple
+import struct
 import traceback
 import uuid
 from json import dumps, loads
+from typing import Dict, List, Optional, Tuple
 
-from .log import logger
-from .type import IPAddress, Port, HashIdentifier, AsyncSocket
+import zmq
+import zmq.asyncio
+
 from .config import DISCOVERY_PORT
+from .log import logger
+from .type import AsyncSocket, HashIdentifier, IPAddress, Port
 
 
 def create_hash_identifier() -> HashIdentifier:
@@ -50,11 +51,15 @@ def get_zmq_socket_port(socket: zmq.asyncio.Socket) -> int:
     return int(endpoint.decode().split(":")[-1])
 
 
-def bmsgsplit(bytes_msg: bytes, separator: bytes = b"|", num: int = 1) -> List[bytes]:
+def bmsgsplit(
+    bytes_msg: bytes, separator: bytes = b"|", num: int = 1
+) -> List[bytes]:
     return bytes_msg.split(separator, num)
 
 
-def bmsgsplit2str(bytes_msg: bytes, separator: str = "|", num: int = 1) -> List[str]:
+def bmsgsplit2str(
+    bytes_msg: bytes, separator: str = "|", num: int = 1
+) -> List[str]:
     return bytes_msg.decode().split(separator, num)
 
 
@@ -70,7 +75,9 @@ def strmsgsplit(str_msg: str, separator: str = "|", num: int = 1) -> List[str]:
 #     return str_msg.split("|", 1)
 
 
-async def send_request(msg: str, addr: str, context: zmq.asyncio.Context) -> str:
+async def send_request(
+    msg: str, addr: str, context: zmq.asyncio.Context
+) -> str:
     req_socket = context.socket(zmq.REQ)
     req_socket.connect(addr)
     try:
@@ -118,6 +125,7 @@ def search_for_master_node(
         except Exception:
             traceback.print_exc()
             return None
+
 
 # TODO: use zmq instead of socket
 async def send_request_async(

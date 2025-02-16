@@ -1,27 +1,37 @@
 from __future__ import annotations
-from typing import Dict, Optional, List, Callable
-import zmq
-from asyncio import sleep as async_sleep
+
 import socket
-from socket import AF_INET, SOCK_DGRAM, SOL_SOCKET, SO_BROADCAST
 import struct
-from json import dumps, loads
-import traceback
 import time
+import traceback
+from asyncio import sleep as async_sleep
+from json import dumps, loads
+from socket import AF_INET, SO_BROADCAST, SOCK_DGRAM, SOL_SOCKET
+from typing import Callable, Dict, List, Optional
+
+import zmq
 import zmq.asyncio
 
 from .abstract_node import AbstractNode
+from .config import (
+    __VERSION__,
+    DISCOVERY_PORT,
+    MASTER_SERVICE_PORT,
+    MASTER_TOPIC_PORT,
+)
 from .log import logger
-from .config import __VERSION__ as __version__
-from .config import DISCOVERY_PORT, MASTER_SERVICE_PORT, MASTER_TOPIC_PORT
-from .utils import IPAddress, HashIdentifier
-from .utils import byte2str, str2byte
-from .type import MasterSocketReqType, ResponseType, ServiceName, TopicName
-from .type import NodeInfo, ComponentInfo
+from .type import (
+    ComponentInfo,
+    MasterSocketReqType,
+    NodeInfo,
+    ResponseType,
+    ServiceName,
+    TopicName,
+)
+from .utils import HashIdentifier, IPAddress, byte2str, str2byte
 
 
 class NodesInfoManager:
-
     def __init__(self, master_id: HashIdentifier) -> None:
         self.nodes_info: Dict[HashIdentifier, NodeInfo] = {}
         self.topics_info: Dict[TopicName, List[ComponentInfo]] = {}
@@ -134,7 +144,7 @@ class LanComMaster(AbstractNode):
             broadcast_bin = ip_bin | ~netmask_bin & 0xFFFFFFFF
             broadcast_ip = socket.inet_ntoa(struct.pack("!I", broadcast_bin))
             while self.running:
-                msg = f"LancomMaster|{__version__}|{self.id}|{self.node_ip}"
+                msg = f"LancomMaster|{__VERSION__}|{self.id}|{self.node_ip}"
                 _socket.sendto(msg.encode(), (broadcast_ip, DISCOVERY_PORT))
                 await async_sleep(0.1)
         logger.info("Broadcasting has been stopped")
@@ -148,7 +158,9 @@ class LanComMaster(AbstractNode):
         }
         self.submit_loop_task(self.broadcast_loop, False)
         self.submit_loop_task(self.publish_master_state_loop, False)
-        self.submit_loop_task(self.service_loop, False, self.socket, self.socket_service_cb)
+        self.submit_loop_task(
+            self.service_loop, False, self.socket, self.socket_service_cb
+        )
 
     async def publish_master_state_loop(self):
         pub_socket = zmq.asyncio.Context().socket(zmq.PUB)  # type: ignore
