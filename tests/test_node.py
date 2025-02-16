@@ -15,9 +15,9 @@ def subscriber_callback(msg: str) -> None:
 
 def test_initialize_node():
     node = pylancom.init_node(random_name("Node"), "127.0.0.1")
-    for _ in range(5):
-        Publisher(random_name("Publisher"))
-        Subscriber(random_name("Subscriber"), str, subscriber_callback)
+    for i in range(5):
+        Publisher(f"topic{i}")
+        Subscriber(f"topic{i}", str, subscriber_callback)
     for _ in range(5):
         service = Service(random_name("Service"), str, str, service_callback)
     node.spin()

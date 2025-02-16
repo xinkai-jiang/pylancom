@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-import socket
 import traceback
 from asyncio import sleep as async_sleep
-from json import dumps
+from json import dumps, loads
 from typing import Awaitable, Callable, Dict, List, Optional
 
 import zmq
 import zmq.asyncio
-from zmq.asyncio import Context as AsyncContext
 
 from . import utils
 from .abstract_node import AbstractNode
@@ -18,12 +16,13 @@ from .lancom_master import LanComMaster
 from .log import logger
 from .type import (
     ComponentInfo,
-    MasterSocketReqType,
+    MasterReqType,
     NodeInfo,
-    NodeSocketReqType,
+    NodeReqType,
     ResponseType,
+    TopicName,
 )
-from .utils import create_request, search_for_master_node
+from .utils import search_for_master_node
 
 
 class LanComNode(AbstractNode):
@@ -41,11 +40,6 @@ class LanComNode(AbstractNode):
             raise Exception("Master node not found")
         self.master_ip = master_ip
         self.master_id = None
-        self.node_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.node_socket.setblocking(False)
-        self.node_socket.bind((node_ip, 0))
-        # local_port = self.node_socket.getsockname()[1]
-        self.zmq_context: AsyncContext = zmq.asyncio.Context()  # type: ignore
         self.pub_socket = self.create_socket(zmq.PUB)
         self.pub_socket.bind(f"tcp://{node_ip}:0")
         self.service_socket = self.create_socket(zmq.REP)
@@ -55,7 +49,7 @@ class LanComNode(AbstractNode):
             "name": node_name,
             "nodeID": utils.create_hash_identifier(),
             "ip": node_ip,
-            "port": self.node_socket.getsockname()[1],
+            "port": utils.get_zmq_socket_port(self.node_socket),
             "type": node_type,
             "topicPort": utils.get_zmq_socket_port(self.pub_socket),
             "topicList": [],
@@ -69,9 +63,6 @@ class LanComNode(AbstractNode):
     def log_node_state(self):
         for key, value in self.local_info.items():
             print(f"    {key}: {value}")
-
-    def create_socket(self, socket_type: int) -> zmq.asyncio.Socket:
-        return self.zmq_context.socket(socket_type)
 
     async def update_master_state_loop(self):
         update_socket = self.create_socket(socket_type=zmq.SUB)
@@ -88,39 +79,14 @@ class LanComNode(AbstractNode):
             )
             traceback.print_exc()
 
-    # async def service_loop(self):
-    #     logger.info("The service loop is running...")
-    #     service_socket = self.service_socket
-    #     while self.running:
-    #         try:
-    #             bytes_msg = await service_socket.recv_multipart()
-    #             service_name, request = bmsgsplit(b"".join(bytes_msg))
-    #             service_name = service_name.decode()
-    #             # the zmq service socket is blocked and only run one at a time
-    #             if service_name in self.service_cbs.keys():
-    #                 response = self.service_cbs[service_name](request)
-    #                 await service_socket.send(response)
-    #         except asyncio.TimeoutError:
-    #             logger.error("Timeout: callback function took too long")
-    #             await service_socket.send(ServiceStatus.TIMEOUT)
-    #         except Exception as e:
-    #             logger.error(
-    #                 f"One error occurred when processing the Service "
-    #                 f'"{service_name}": {e}'
-    #             )
-    #             traceback.print_exc()
-    #             await service_socket.send(ServiceStatus.ERROR)
-    #         await async_sleep(0.01)
-    #     logger.info("Service loop has been stopped")
-
     def initialize_event_loop(self):
         self.submit_loop_task(
             self.service_loop, False, self.service_socket, self.service_cbs
         )
         self.submit_loop_task(self.update_master_state_loop, False)
         self.socket_service_cb: Dict[str, Callable[[str], str]] = {
-            # NodeSocketReqType.PING.value: self.ping,
-            NodeSocketReqType.SUBSCRIBE_TOPIC.value: self.subscribe_topic,
+            # NodeReqType.PING.value: self.ping,
+            NodeReqType.UPDATE_SUBSCRIBER.value: self.update_subscriber,
             # LanComSocketReqType.NODE_OFFLINE.value: self.node_offline,
             # LanComSocketReqType.GET_NODES_INFO.value: self.get_nodes_info,
         }
@@ -134,28 +100,35 @@ class LanComNode(AbstractNode):
         try:
             # NOTE: the loop will be stopped when pressing Ctrl+C
             # so we need to create a new socket to send offline request
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-                sock.connect((self.master_ip, MASTER_SERVICE_PORT))
-                request = create_request(
-                    MasterSocketReqType.NODE_OFFLINE.value,
-                    self.local_info["nodeID"],
-                )
-                sock.sendall(request.encode("utf-8"))
-                response = sock.recv(4096)
-                return response.decode("utf-8")
+            request_socket = zmq.Context().socket(zmq.REQ)
+            request_socket.connect(
+                f"tcp://{self.master_ip}:{MASTER_SERVICE_PORT}"
+            )
+            node_id = self.local_info["nodeID"]
+            request_socket.send_string(
+                f"{MasterReqType.NODE_OFFLINE.value}|{node_id}"
+            )
         except Exception as e:
             logger.error(f"Error sending offline request to master: {e}")
+            traceback.print_exc()
         super().stop_node()
         self.node_socket.close()
         logger.info(f"Node {self.local_info['name']} is stopped")
 
     async def update_master_state(self, message: str) -> None:
-        if message != self.master_id:
-            self.master_id = message
-            logger.debug(f"Connecting to master node at {self.master_ip}")
-            await self.send_socket_request_to_master(
-                MasterSocketReqType.REGISTER_NODE.value, dumps(self.local_info)
-            )
+        if message == self.master_id:
+            return
+        self.master_id = message
+        logger.debug(f"Connecting to master node at {self.master_ip}")
+        msg = await self.send_node_request_to_master(
+            MasterReqType.REGISTER_NODE.value, dumps(self.local_info)
+        )
+        topics_info: Dict[TopicName, List[ComponentInfo]] = loads(msg)
+        for topic_name, publisher_list in topics_info.items():
+            if topic_name not in self.sub_sockets.keys():
+                continue
+            for topic_info in publisher_list:
+                self.subscribe_topic(topic_name, topic_info)
         # for topic_name in self.sub_sockets.keys():
         #     if topic_name not in state["topic"].keys():
         #         for socket in self.sub_sockets[topic_name]:
@@ -163,25 +136,29 @@ class LanComNode(AbstractNode):
         #         self.sub_sockets.pop(topic_name)
         # self.connection_state = state
 
-    def subscribe_topic(self, msg: str) -> str:
+    def update_subscriber(self, msg: str) -> str:
         info: ComponentInfo = utils.loads(msg)
-        topic_name = info["name"]
+        self.subscribe_topic(info["name"], info)
+        return ResponseType.SUCCESS.value
+
+    def subscribe_topic(
+        self, topic_name: TopicName, topic_info: ComponentInfo
+    ) -> None:
+        # print(f"Subscribing to topic {topic_name}")
         if topic_name not in self.sub_sockets.keys():
             logger.warning(
                 f"Master sending a wrong subscription request for {topic_name}"
             )
-            return ResponseType.ERROR.value
+            return
         for _socket in self.sub_sockets[topic_name]:
-            _socket.connect(f"tcp://{info['ip']}:{info['port']}")
-        return ResponseType.SUCCESS.value
+            _socket.connect(f"tcp://{topic_info['ip']}:{topic_info['port']}")
 
-    async def send_socket_request_to_master(
+    async def send_node_request_to_master(
         self, request_type: str, message: str
-    ) -> None:
-        addr = (self.master_ip, MASTER_SERVICE_PORT)
-        request = create_request(request_type, message)
-        await send_tcp_request_async(self.node_socket, addr, request)
-        print("Request sent to master")
+    ) -> str:
+        return await self.send_request(
+            request_type, self.master_ip, MASTER_SERVICE_PORT, message
+        )
 
     # def disconnect_from_master(self) -> None:
     #     pass

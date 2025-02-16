@@ -3,34 +3,34 @@ from __future__ import annotations
 import abc
 import asyncio
 import concurrent.futures
-import multiprocessing as mp
-import socket
-import time
 import traceback
-from asyncio import sleep as async_sleep
-from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Dict, List, Union
+from typing import Any, Callable, Dict, Union
 
 import zmq
 import zmq.asyncio
 from zmq.asyncio import Context as AsyncContext
 
-from pylancom.utils import get_zmq_socket_port
-
 from .log import logger
-from .type import IPAddress, NodeInfo, Port, ResponseType
-from .utils import bmsgsplit, bmsgsplit2str, create_hash_identifier
+from .type import IPAddress, Port, ResponseType
+from .utils import (
+    bmsgsplit,
+    create_hash_identifier,
+    create_request,
+    send_request_async,
+)
 
 
 class AbstractNode(abc.ABC):
     def __init__(self, node_ip: IPAddress, socket_port: Port = 0) -> None:
         super().__init__()
+        self.zmq_context: AsyncContext = zmq.asyncio.Context()  # type: ignore
+        self.node_socket = self.create_socket(zmq.REP)  # type: ignore
+        self.node_socket.bind(f"tcp://{node_ip}:{socket_port}")
+        self.request_socket = self.create_socket(zmq.REQ)
         self.id = create_hash_identifier()
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.socket.bind((node_ip, socket_port))
-        self.socket.setblocking(False)
-        self.socket_service_cb: Dict[str, Callable[[str], str]] = {}
+
+    def create_socket(self, socket_type: int) -> zmq.asyncio.Socket:
+        return self.zmq_context.socket(socket_type)
 
     def submit_loop_task(
         self,
@@ -53,7 +53,6 @@ class AbstractNode(abc.ABC):
         try:
             self.loop = asyncio.get_event_loop()  # Get the existing event loop
             self.running = True
-            self.submit_loop_task(self.tcp_server, False)
             self.initialize_event_loop()
             self.loop.run_forever()
         except KeyboardInterrupt:
@@ -72,10 +71,17 @@ class AbstractNode(abc.ABC):
         try:
             if self.loop.is_running():
                 self.loop.call_soon_threadsafe(self.loop.stop)
-            self.socket.close()
         except RuntimeError as e:
             logger.error(f"One error occurred when stop server: {e}")
         # self.executor.shutdown(wait=False)
+
+    async def send_request(
+        self, request_type: str, ip: IPAddress, port: Port, message: str
+    ) -> str:
+        addr = f"tcp://{ip}:{port}"
+        # print(f"Sending request to {addr}, message: {message}")
+        request = create_request(request_type, message)
+        return await send_request_async(self.request_socket, addr, request)
 
     async def service_loop(
         self,
@@ -87,6 +93,7 @@ class AbstractNode(abc.ABC):
             bytes_msg = await service_socket.recv_multipart()
             service_name, request = bmsgsplit(b"".join(bytes_msg))
             service_name = service_name.decode()
+            print(f"Service name: {service_name}, request: {request}")
             # the zmq service socket is blocked and only run one at a time
             if service_name not in services.keys():
                 logger.error(f"Service {service_name} is not available")
@@ -104,45 +111,3 @@ class AbstractNode(abc.ABC):
                 traceback.print_exc()
                 await service_socket.send(ResponseType.ERROR.value)
         logger.info("Service loop has been stopped")
-
-    # async def tcp_server(self):
-    #     try:
-    #         server = await asyncio.start_server(self.handle_request, sock=self.socket)
-    #         addr = server.sockets[0].getsockname()
-    #         logger.info(f"TCP server started on {addr}")
-    #         async with server:
-    #             await server.serve_forever()
-    #     except KeyboardInterrupt:
-    #         logger.debug("TCP server is stopped")
-    #     except Exception as e:
-    #         logger.error(f"Error when starting TCP server: {e}")
-    #         traceback.print_exc()
-    #     finally:
-    #         server.close()
-    #         await server.wait_closed()
-
-    # async def handle_request(
-    #     self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
-    # ):
-    #     """
-    #     Handle incoming TCP client connections and echo received messages.
-    #     """
-    #     addr = writer.get_extra_info("peername")
-    #     # logger.info(f"New connection from {addr}")
-    #     # while True:
-    #     try:
-    #         data = await reader.read(4096)
-    #         logger.info(f"Received data from {addr}: {data.decode()}")
-    #         service_name, request = bmsgsplit2str(data)
-    #         response = ResponseType.ERROR.value
-    #         if service_name in self.socket_service_cb.keys():
-    #             response = self.socket_service_cb[service_name](request)
-    #         writer.write(response.encode())
-    #         await writer.drain()
-    #     except Exception as e:
-    #         logger.error(f"Error with client {addr}: {e}")
-    #         traceback.print_exc()
-    #     finally:
-    #         writer.close()
-    #         await writer.wait_closed()
-    # logger.info(f"Connection with {addr} closed")

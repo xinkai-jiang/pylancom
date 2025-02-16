@@ -22,13 +22,13 @@ from .config import (
 from .log import logger
 from .type import (
     ComponentInfo,
-    MasterSocketReqType,
+    MasterReqType,
     NodeInfo,
     ResponseType,
     ServiceName,
     TopicName,
 )
-from .utils import HashIdentifier, IPAddress, byte2str, str2byte
+from .utils import HashIdentifier, IPAddress, bytes2str, str2bytes
 
 
 class NodesInfoManager:
@@ -60,9 +60,17 @@ class NodesInfoManager:
 
     def remove_node(self, node_id: HashIdentifier):
         try:
-            if node_id in self.nodes_info.keys():
-                removed_info = self.nodes_info.pop(node_id)
-                logger.info(f"Node {removed_info['name']} is offline")
+            if node_id not in self.nodes_info.keys():
+                logger.warning(f"Node {node_id} is not found")
+            removed_info = self.nodes_info.pop(node_id)
+            logger.info(f"Node {removed_info['name']} is offline")
+            for topic_info in removed_info["topicList"]:
+                self.topics_info[topic_info["name"]].remove(topic_info)
+            for service_info in removed_info["serviceList"]:
+                self.services_info.pop(service_info["name"])
+            for subscriber_info in removed_info["subscriberList"]:
+                topic_name = subscriber_info["name"]
+                self.subscribers_info[topic_name].remove(subscriber_info)
         except Exception as e:
             logger.error(f"Error occurred when removing node: {e}")
             traceback.print_exc()
@@ -150,17 +158,17 @@ class LanComMaster(AbstractNode):
         logger.info("Broadcasting has been stopped")
 
     def initialize_event_loop(self):
-        self.socket_service_cb: Dict[str, Callable[[bytes], bytes]] = {
-            MasterSocketReqType.PING.value: self.ping,
-            MasterSocketReqType.REGISTER_NODE.value: self.register_node,
-            MasterSocketReqType.NODE_OFFLINE.value: self.node_offline,
-            # MasterSocketReqType.GET_NODES_INFO.value: self.get_nodes_info,
+        node_service_cb: Dict[str, Callable[[bytes], bytes]] = {
+            MasterReqType.PING.value: self.ping,
+            MasterReqType.REGISTER_NODE.value: self.register_node,
+            MasterReqType.NODE_OFFLINE.value: self.node_offline,
+            MasterReqType.GET_NODES_INFO.value: self.get_nodes_info,
         }
+        self.submit_loop_task(
+            self.service_loop, False, self.node_socket, node_service_cb
+        )
         self.submit_loop_task(self.broadcast_loop, False)
         self.submit_loop_task(self.publish_master_state_loop, False)
-        self.submit_loop_task(
-            self.service_loop, False, self.socket, self.socket_service_cb
-        )
 
     async def publish_master_state_loop(self):
         pub_socket = zmq.asyncio.Context().socket(zmq.PUB)  # type: ignore
@@ -177,13 +185,28 @@ class LanComMaster(AbstractNode):
         return str(time.time()).encode()
 
     def register_node(self, msg: bytes) -> bytes:
-        mode_info: NodeInfo = loads(byte2str(msg))
-        self.nodes_info_manager.register_node(mode_info)
-        return str2byte(ResponseType.SUCCESS.value)
+        node_info: NodeInfo = loads(bytes2str(msg))
+        self.nodes_info_manager.register_node(node_info)
+        # TODO: send connection request to all the subscribers
+        # for subscriber in node_info["subscriberList"]:
+        #     topic_name = subscriber["name"]
+        #     topics_info = self.nodes_info_manager.get_topics()
+        #     if topic_name not in topics_info:
+        #         continue
+        #     for topic_info in topics_info[topic_name]:
+        #         self.submit_loop_task(
+        #             self.send_request,
+        #             False,
+        #             NodeReqType.UPDATE_SUBSCRIBER.value,
+        #             topic_info["ip"],
+        #             topic_info["port"],
+        #             dumps(topic_info),
+        #         )
+        return str2bytes(dumps(self.nodes_info_manager.get_topics()))
 
     def node_offline(self, msg: bytes) -> bytes:
-        self.nodes_info_manager.remove_node(byte2str(msg))
-        return str2byte(ResponseType.SUCCESS.value)
+        self.nodes_info_manager.remove_node(bytes2str(msg))
+        return str2bytes(ResponseType.SUCCESS.value)
 
     def get_nodes_info(self, msg: bytes) -> bytes:
         nodes_info = self.nodes_info_manager.get_nodes_info()

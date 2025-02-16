@@ -19,7 +19,7 @@ class ComponentTypeEnum(Enum):
     SERVICE = "SERVICE"
 
 
-class MasterSocketReqType(Enum):
+class MasterReqType(Enum):
     PING = "PING"
     REGISTER_NODE = "REGISTER_NODE"
     NODE_OFFLINE = "NODE_OFFLINE"
@@ -29,9 +29,9 @@ class MasterSocketReqType(Enum):
     SERVICE_INFO = "REGISTER_NODE"
 
 
-class NodeSocketReqType(Enum):
+class NodeReqType(Enum):
     PING = "PING"
-    SUBSCRIBE_TOPIC = "SUBSCRIBE_TOPIC"
+    UPDATE_SUBSCRIBER = "UPDATE_SUBSCRIBER"
 
 
 class ResponseType(Enum):

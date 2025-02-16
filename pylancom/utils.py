@@ -1,17 +1,15 @@
-import asyncio
 import socket
 import struct
 import traceback
 import uuid
 from json import dumps, loads
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import zmq
 import zmq.asyncio
 
 from .config import DISCOVERY_PORT
-from .log import logger
-from .type import AsyncSocket, HashIdentifier, IPAddress, Port
+from .type import HashIdentifier, IPAddress
 
 
 def create_hash_identifier() -> HashIdentifier:
@@ -26,19 +24,19 @@ def msgs_join(msgs: List[str]) -> str:
     return "|".join(msgs)
 
 
-def byte2str(byte_msg: bytes) -> str:
+def bytes2str(byte_msg: bytes) -> str:
     return byte_msg.decode()
 
 
-def str2byte(str_msg: str) -> bytes:
+def str2bytes(str_msg: str) -> bytes:
     return str_msg.encode()
 
 
-def dict2byte(dict_msg: Dict) -> bytes:
+def dict2bytes(dict_msg: Dict) -> bytes:
     return dumps(dict_msg).encode()
 
 
-def byte2dict(byte_msg: bytes) -> Dict:
+def bytes2dict(byte_msg: bytes) -> Dict:
     return loads(byte_msg.decode())
 
 
@@ -75,21 +73,21 @@ def strmsgsplit(str_msg: str, separator: str = "|", num: int = 1) -> List[str]:
 #     return str_msg.split("|", 1)
 
 
-async def send_request(
-    msg: str, addr: str, context: zmq.asyncio.Context
-) -> str:
-    req_socket = context.socket(zmq.REQ)
-    req_socket.connect(addr)
-    try:
-        await req_socket.send_string(msg)
-    except Exception as e:
-        logger.error(
-            f"Error when sending message from send_message function in "
-            f"pylancom.core.utils: {e}"
-        )
-    result = await req_socket.recv_string()
-    req_socket.close()
-    return result
+# async def send_request(
+#     msg: str, addr: str, context: zmq.asyncio.Context
+# ) -> str:
+#     req_socket = context.socket(zmq.REQ)
+#     req_socket.connect(addr)
+#     try:
+#         await req_socket.send_string(msg)
+#     except Exception as e:
+#         logger.error(
+#             f"Error when sending message from send_message function in "
+#             f"pylancom.core.utils: {e}"
+#         )
+#     result = await req_socket.recv_string()
+#     req_socket.close()
+#     return result
 
 
 def calculate_broadcast_addr(ip_addr: IPAddress) -> IPAddress:
@@ -110,7 +108,8 @@ def search_for_master_node(
         timeout (int): Timeout in seconds before quitting.
 
     Returns:
-        str or None: Sender's IP address if a message is received, None otherwise.
+        str or None: Sender's IP address if a message is received,
+        None otherwise.
     """
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server_socket:
         server_socket.bind((ip, port))  # Listen on all interfaces
@@ -127,33 +126,19 @@ def search_for_master_node(
             return None
 
 
-# TODO: use zmq instead of socket
 async def send_request_async(
-    addr: Tuple[IPAddress, Port], message: str
+    sock: zmq.asyncio.Socket, addr: str, message: str
 ) -> str:
-    loop = asyncio.get_running_loop()
-    # Connect to the target server
-    await loop.sock_connect(sock, addr)
-    # Send the message (encoded to bytes)
-    await loop.sock_sendall(sock, message.encode("utf-8"))
-    # Wait and receive the response (up to 4096 bytes)
-    response = await loop.sock_recv(sock, 4096)
-    # Close the socket after the transaction
-    # sock.close()
-    return response.decode("utf-8")
-
-
-def send_tcp_request(addr: Tuple[IPAddress, Port], message: str) -> str:
     """
-    Synchronously sends a TCP request to the specified address using a blocking socket,
-    utilizing a context manager to ensure proper resource cleanup.
+    Asynchronously sends a request via a ZeroMQ socket using asyncio.
 
-    :param addr: A tuple (IP address, port) to connect to.
+    :param sock: A zmq.asyncio.Socket instance.
+    :param addr: The address to connect to (e.g., "tcp://127.0.0.1:5555").
     :param message: The message to send.
     :return: The response received from the server as a string.
     """
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.connect(addr)
-        sock.sendall(message.encode("utf-8"))
-        response = sock.recv(4096)
-        return response.decode("utf-8")
+    sock.connect(addr)
+    await sock.send_string(message)
+    response = await sock.recv_string()
+    sock.disconnect(addr)
+    return response
