@@ -35,7 +35,7 @@ from .utils import HashIdentifier, IPAddress, bytes2str, str2bytes
 class NodesInfoManager:
     def __init__(self, master_id: HashIdentifier) -> None:
         self.nodes_info: Dict[HashIdentifier, NodeInfo] = {}
-        self.topics_info: Dict[TopicName, List[ComponentInfo]] = {}
+        self.publishers_info: Dict[TopicName, List[ComponentInfo]] = {}
         self.subscribers_info: Dict[HashIdentifier, List[ComponentInfo]] = {}
         self.services_info: Dict[ServiceName, ComponentInfo] = {}
 
@@ -66,7 +66,7 @@ class NodesInfoManager:
             removed_info = self.nodes_info.pop(node_id)
             logger.info(f"Node {removed_info['name']} is offline")
             for topic_info in removed_info["topicList"]:
-                self.topics_info[topic_info["name"]].remove(topic_info)
+                self.publishers_info[topic_info["name"]].remove(topic_info)
             for service_info in removed_info["serviceList"]:
                 self.services_info.pop(service_info["name"])
             for subscriber_info in removed_info["subscriberList"]:
@@ -76,14 +76,13 @@ class NodesInfoManager:
             logger.error(f"Error occurred when removing node: {e}")
             traceback.print_exc()
 
-    def get_node_info(self, node_name: str) -> Optional[NodeInfo]:
-        for info in self.nodes_info.values():
-            if info["name"] == node_name:
-                return info
+    def get_node_info(self, node_name: HashIdentifier) -> Optional[NodeInfo]:
+        if node_name in self.nodes_info:
+            return self.nodes_info[node_name]
         return None
 
-    def get_topics(self) -> Dict[TopicName, List[ComponentInfo]]:
-        return self.topics_info
+    def get_publishers(self) -> Dict[TopicName, List[ComponentInfo]]:
+        return self.publishers_info
 
     def get_services(self) -> Dict[ServiceName, ComponentInfo]:
         return self.services_info
@@ -94,15 +93,14 @@ class NodesInfoManager:
     def register_node(self, node_info: NodeInfo):
         if node_info["nodeID"] in self.nodes_info.keys():
             logger.warning(f"Node {node_info['name']} has been updated")
-        logger.info(f"Node {node_info['name']} is launched")
         self.nodes_info[node_info["nodeID"]] = node_info
 
-    def register_topic(self, topic_info: ComponentInfo) -> None:
+    def register_publisher(self, topic_info: ComponentInfo) -> None:
         topic_name = topic_info["name"]
-        if topic_name not in self.topics_info.keys():
-            self.topics_info[topic_name] = []
+        if topic_name not in self.publishers_info.keys():
+            self.publishers_info[topic_name] = []
             logger.info(f"Topic {topic_info['name']} has been registered")
-        self.topics_info[topic_name].append(topic_info)
+        self.publishers_info[topic_name].append(topic_info)
 
     def register_service(self, service_info: ComponentInfo):
         if service_info["name"] not in self.services_info.keys():
@@ -171,29 +169,36 @@ class LanComMaster(AbstractNode):
 
     def register_node(self, msg: bytes) -> bytes:
         node_info: NodeInfo = loads(bytes2str(msg))
-        self.nodes_info_manager.register_node(node_info)
         for topic_info in node_info["topicList"]:
-            self.nodes_info_manager.register_topic(topic_info)
-            if (
-                topic_info["name"]
-                not in self.nodes_info_manager.get_topics().keys()
-            ):
+            subscribers_info = self.nodes_info_manager.get_subscribers()
+            self.nodes_info_manager.register_publisher(topic_info)
+            if topic_info["name"] not in subscribers_info:
                 continue
-            for publisher_info in topics:
+            for subscriber_info in subscribers_info[topic_info["name"]]:
+                target_node_info = self.nodes_info_manager.get_node_info(
+                    subscriber_info["nodeID"]
+                )
+                if target_node_info is None:
+                    # TODO: better warning message
+                    logger.warning(
+                        f"Subscriber {subscriber_info['name']} is not found"
+                    )
+                    continue
                 self.submit_loop_task(
                     self.send_request,
                     False,
                     NodeReqType.UPDATE_SUBSCRIBER.value,
-                    node_info["ip"],
-                    node_info["port"],
+                    target_node_info["ip"],
+                    target_node_info["port"],
                     dumps(topic_info),
                 )
-            print(node_info)
+        self.nodes_info_manager.register_node(node_info)
         for service_info in node_info["serviceList"]:
             self.nodes_info_manager.register_service(service_info)
         for subscriber_info in node_info["subscriberList"]:
             self.nodes_info_manager.register_subscriber(subscriber_info)
-        return str2bytes(dumps(self.nodes_info_manager.get_topics()))
+        logger.info(f"Node {node_info['name']} is registered")
+        return str2bytes(dumps(self.nodes_info_manager.get_publishers()))
 
     def node_offline(self, msg: bytes) -> bytes:
         self.nodes_info_manager.remove_node(bytes2str(msg))

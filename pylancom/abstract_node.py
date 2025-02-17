@@ -85,7 +85,7 @@ class AbstractNode(abc.ABC):
         addr = f"tcp://{ip}:{port}"
         # print(f"Sending request to {addr}, message: {message}")
         request = create_request(request_type, message)
-        return await send_request_async(self.request_socket, addr, request)
+        return await send_request_async(addr, request)
 
     async def service_loop(
         self,
@@ -96,13 +96,13 @@ class AbstractNode(abc.ABC):
             bytes_msg = await service_socket.recv_multipart()
             service_name, request = bmsgsplit(b"".join(bytes_msg))
             service_name = service_name.decode()
-            print(f"Service name: {service_name}, request: {request}")
             # the zmq service socket is blocked and only run one at a time
             if service_name not in services.keys():
                 logger.error(f"Service {service_name} is not available")
             try:
                 result = services[service_name](request)
-                await service_socket.send(result)
+                result = await service_socket.send(result)
+            # TODO: fix the timeout issue
             except asyncio.TimeoutError:
                 logger.error("Timeout: callback function took too long")
                 await service_socket.send(ResponseType.TIMEOUT.value)

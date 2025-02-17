@@ -146,9 +146,10 @@ def search_for_master_node(
 
 
 async def send_request_async(
-    sock: zmq.asyncio.Socket, addr: str, message: str, timeout: float = 5.0
+    addr: str, message: str, timeout: float = 5.0
 ) -> str:
     try:
+        sock = zmq.asyncio.Context().socket(zmq.REQ)
         sock.connect(addr)
         # Send the message; you can also wrap this in wait_for if needed.
         await sock.send_string(message)

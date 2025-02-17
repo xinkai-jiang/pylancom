@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import traceback
-from asyncio import sleep as async_sleep
 from json import dumps, loads
 from typing import Awaitable, Callable, Dict, List, Optional
 
@@ -72,7 +71,7 @@ class LanComNode(AbstractNode):
             while self.running:
                 message = await update_socket.recv_string()
                 await self.update_master_state(message)
-                await async_sleep(0.01)
+                # await async_sleep(0.01)
         except Exception as e:
             logger.error(
                 f"Error occurred in update_connection_state_loop: {e}"
@@ -83,7 +82,7 @@ class LanComNode(AbstractNode):
         self.submit_loop_task(
             self.service_loop, False, self.service_socket, self.service_cbs
         )
-        node_service_cb: Dict[str, Callable[[str], str]] = {
+        node_service_cb: Dict[str, Callable[[bytes], bytes]] = {
             NodeReqType.UPDATE_SUBSCRIBER.value: self.update_subscriber,
         }
         self.submit_loop_task(
@@ -123,17 +122,17 @@ class LanComNode(AbstractNode):
         msg = await self.send_node_request_to_master(
             MasterReqType.REGISTER_NODE.value, dumps(self.local_info)
         )
-        topics_info: Dict[TopicName, List[ComponentInfo]] = loads(msg)
-        for topic_name, publisher_list in topics_info.items():
+        publisher_info: Dict[TopicName, List[ComponentInfo]] = loads(msg)
+        for topic_name, publisher_list in publisher_info.items():
             if topic_name not in self.sub_sockets.keys():
                 continue
             for topic_info in publisher_list:
                 self.subscribe_topic(topic_name, topic_info)
 
-    def update_subscriber(self, msg: str) -> str:
-        publisher_info: ComponentInfo = utils.loads(msg)
+    def update_subscriber(self, msg: bytes) -> bytes:
+        publisher_info: ComponentInfo = utils.loads(msg.decode())
         self.subscribe_topic(publisher_info["name"], publisher_info)
-        return ResponseType.SUCCESS.value
+        return ResponseType.SUCCESS.value.encode()
 
     def subscribe_topic(
         self, topic_name: TopicName, topic_info: ComponentInfo
@@ -153,9 +152,10 @@ class LanComNode(AbstractNode):
     async def send_node_request_to_master(
         self, request_type: str, message: str
     ) -> str:
-        return await self.send_request(
+        result = await self.send_request(
             request_type, self.master_ip, MASTER_SERVICE_PORT, message
         )
+        return result
 
 
 def start_master_node(node_ip: str) -> LanComMaster:
