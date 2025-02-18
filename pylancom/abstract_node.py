@@ -4,6 +4,7 @@ import abc
 import asyncio
 import concurrent.futures
 import threading
+import time
 import traceback
 from typing import Any, Callable, Dict, Union
 
@@ -22,6 +23,8 @@ from .utils import (
 
 
 class AbstractNode(abc.ABC):
+    # instance: Optional[AbstractNode] = None
+
     def __init__(self, node_ip: IPAddress, socket_port: Port = 0) -> None:
         super().__init__()
         self.zmq_context: AsyncContext = zmq.asyncio.Context()  # type: ignore
@@ -52,10 +55,13 @@ class AbstractNode(abc.ABC):
         else:
             thread = threading.Thread(target=self.spin_task, daemon=True)
             thread.start()
+            while hasattr(self, "loop") is False:
+                time.sleep(0.05)
 
     def spin_task(self) -> None:
         try:
-            self.loop = asyncio.get_event_loop()  # Get the existing event loop
+            self.loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self.loop)
             self.running = True
             self.initialize_event_loop()
             self.loop.run_forever()

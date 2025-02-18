@@ -31,7 +31,7 @@ class MasterReqType(Enum):
 
 class NodeReqType(Enum):
     PING = "PING"
-    UPDATE_SUBSCRIBER = "UPDATE_SUBSCRIBER"
+    UPDATE_SUBSCRIPTION = "UPDATE_SUBSCRIPTION"
 
 
 class ResponseType(Enum):

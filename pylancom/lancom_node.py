@@ -3,10 +3,11 @@ from __future__ import annotations
 import multiprocessing as mp
 import traceback
 from json import dumps, loads
-from typing import Awaitable, Callable, Dict, List, Optional
+from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 import zmq
 import zmq.asyncio
+from zmq.asyncio import Socket as AsyncSocket
 
 from . import utils
 from .abstract_node import AbstractNode
@@ -28,7 +29,7 @@ class LanComNode(AbstractNode):
     instance: Optional[LanComNode] = None
 
     def __init__(
-        self, node_name: str, node_ip: str, node_type: str = "PyLanComNode"
+        self, node_name: str, node_ip: str, node_type: str = "LanComNode"
     ) -> None:
         master_ip = search_for_master_node()
         if LanComNode.instance is not None:
@@ -43,7 +44,7 @@ class LanComNode(AbstractNode):
         self.pub_socket.bind(f"tcp://{node_ip}:0")
         self.service_socket = self.create_socket(zmq.REP)
         self.service_socket.bind(f"tcp://{node_ip}:0")
-        self.sub_sockets: Dict[str, List[zmq.asyncio.Socket]] = {}
+        self.sub_sockets: Dict[str, List[Tuple[AsyncSocket, Callable]]] = {}
         self.local_info: NodeInfo = {
             "name": node_name,
             "nodeID": utils.create_hash_identifier(),
@@ -83,7 +84,7 @@ class LanComNode(AbstractNode):
             self.service_loop, False, self.service_socket, self.service_cbs
         )
         node_service_cb: Dict[str, Callable[[bytes], bytes]] = {
-            NodeReqType.UPDATE_SUBSCRIBER.value: self.update_subscriber,
+            NodeReqType.UPDATE_SUBSCRIPTION.value: self.update_subscription,
         }
         self.submit_loop_task(
             self.service_loop, False, self.node_socket, node_service_cb
@@ -129,21 +130,32 @@ class LanComNode(AbstractNode):
             for topic_info in publisher_list:
                 self.subscribe_topic(topic_name, topic_info)
 
-    def update_subscriber(self, msg: bytes) -> bytes:
+    def update_subscription(self, msg: bytes) -> bytes:
         publisher_info: ComponentInfo = utils.loads(msg.decode())
         self.subscribe_topic(publisher_info["name"], publisher_info)
         return ResponseType.SUCCESS.value.encode()
 
+    def register_subscription(
+        self,
+        topic_name: TopicName,
+        zmq_socket: AsyncSocket,
+        handle_func: Callable[[], Awaitable],
+    ) -> None:
+        if topic_name not in self.sub_sockets:
+            self.sub_sockets[topic_name] = []
+        self.sub_sockets[topic_name].append((zmq_socket, handle_func))
+
     def subscribe_topic(
-        self, topic_name: TopicName, topic_info: ComponentInfo
+        self, topic_name: TopicName, publisher_info: ComponentInfo
     ) -> None:
         if topic_name not in self.sub_sockets.keys():
-            logger.warning(
-                f"Master sending a wrong subscription request for {topic_name}"
-            )
+            logger.warning(f"Wrong subscription request for {topic_name}")
             return
-        for _socket in self.sub_sockets[topic_name]:
-            _socket.connect(f"tcp://{topic_info['ip']}:{topic_info['port']}")
+        for _socket, handle_func in self.sub_sockets[topic_name]:
+            _socket.connect(
+                f"tcp://{publisher_info['ip']}:{publisher_info['port']}"
+            )
+            self.submit_loop_task(handle_func, False)
         logger.info(
             f"Subscribers from Node {self.local_info['name']} "
             f"have been subscribed to topic {topic_name}"

@@ -187,7 +187,7 @@ class LanComMaster(AbstractNode):
                 self.submit_loop_task(
                     self.send_request,
                     False,
-                    NodeReqType.UPDATE_SUBSCRIBER.value,
+                    NodeReqType.UPDATE_SUBSCRIPTION.value,
                     target_node_info["ip"],
                     target_node_info["port"],
                     dumps(topic_info),

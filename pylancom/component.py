@@ -79,24 +79,22 @@ class Publisher(AbstractComponent):
         self.set_up_socket(self.node.pub_socket)
         self.node.local_info["topicList"].append(self.info)
         self.socket = self.node.pub_socket
-        logger.info(msg=f'Topic "{topic_name}" is ready to publish')
 
-    def publish_bytes(self, data: bytes) -> None:
-        msg = b"".join([f"{self.name}:".encode(), b"|", data])
-        self.node.submit_loop_task(self.send_bytes_async, False, msg)
+    def publish_bytes(self, bytes_msg: bytes) -> None:
+        self.node.submit_loop_task(self.send_bytes_async, False, bytes_msg)
+
+    def publish_string(self, msg: str) -> None:
+        self.node.submit_loop_task(self.send_bytes_async, False, msg.encode())
 
     def publish_dict(self, data: Dict) -> None:
         self.publish_string(dumps(data))
 
-    def publish_string(self, string: str) -> None:
-        msg = f"{self.name}|{string}"
-        self.node.submit_loop_task(self.send_bytes_async, False, msg.encode())
-
     def on_shutdown(self) -> None:
         self.node.local_info["topicList"].remove(self.info)
 
-    async def send_bytes_async(self, msg: bytes) -> None:
-        await self.socket.send(msg)
+    async def send_bytes_async(self, bytes_msg: bytes) -> None:
+        # await self.socket.send(msg)
+        await self.socket.send_multipart([self.name.encode(), bytes_msg])
 
 
 class Streamer(Publisher):
@@ -180,6 +178,7 @@ class Subscriber(AbstractComponent):
     ):
         super().__init__(topic_name, ComponentTypeEnum.SUBSCRIBER.value, False)
         self.socket = self.node.create_socket(zmq.SUB)
+        self.socket.setsockopt(zmq.SUBSCRIBE, self.name.encode())
         self.subscribed_components: Dict[HashIdentifier, ComponentInfo] = {}
         if msg_type is bytes:
             self.decoder = cast(Callable[[bytes], bytes], lambda x: x)
@@ -192,17 +191,16 @@ class Subscriber(AbstractComponent):
         self.connected = False
         self.callback = callback
         self.node.local_info["subscriberList"].append(self.info)
-        if self.name not in self.node.sub_sockets:
-            self.node.sub_sockets[self.name] = []
-        self.node.sub_sockets[self.name].append(self.socket)
-        self.socket.setsockopt_string(zmq.SUBSCRIBE, self.name)
+        self.node.register_subscription(self.name, self.socket, self.listen)
+        self.running = True
 
     async def listen(self) -> None:
         """Listens for incoming messages on the subscribed topic."""
+        logger.info(f"Subscriber {self.name} is listening...")
         while self.running:
             try:
                 # Wait for a message
-                msg = await self.socket.recv()
+                _, msg = await self.socket.recv_multipart()
                 # Invoke the callback
                 self.callback(self.decoder(msg))
             except Exception as e:

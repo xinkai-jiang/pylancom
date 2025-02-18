@@ -1,6 +1,6 @@
 import multiprocessing as mp
 import time
-from typing import Callable, List
+from typing import Callable, Dict, List
 
 from utils import random_name
 
@@ -16,8 +16,12 @@ def test_master_node_broadcast():
 
 def create_service_callback(service_name: str) -> Callable[[str], str]:
     def service_callback(msg: str) -> str:
-        print(f"Service {service_name} received message: {msg}")
-        return msg
+        try:
+            print(f"Service {service_name} received message: {msg}")
+            return msg
+        except Exception as e:
+            print(f"Error in service {service_name}: {e}")
+            return "Error"
 
     return service_callback
 
@@ -34,13 +38,29 @@ def create_subscriber_callback(
 def start_node(publisher_list: List[str], subscriber_list: List[str]):
     node_name = random_name("Node")
     node = pylancom.init_node(node_name, "127.0.0.1")
+    node.spin(block=False)
+    publisher_dict: Dict[str, Publisher] = {}
+    subscriber_dict: Dict[str, Subscriber] = {}
     for name in publisher_list:
-        Publisher(name)
+        publisher_dict[name] = Publisher(name)
     for name in subscriber_list:
-        Subscriber(name, str, create_subscriber_callback(name))
-    # for _ in range(5):
-    # service = Service(random_name("Service"), str, str, create_service_callback())
-    node.spin()
+        subscriber_dict[name] = Subscriber(
+            name, str, create_subscriber_callback(name)
+        )
+    try:
+        i = 0
+        while True:
+            time.sleep(1)
+            for name, publisher in publisher_dict.items():
+                # print(f"Publishing message from {name}")
+                publisher.publish_string(f"{name} message, Number {i}")
+            i += 1
+    except KeyboardInterrupt:
+        node.stop_node()
+        print("Node stopped")
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        node.stop_node()
 
 
 if __name__ == "__main__":
@@ -48,7 +68,7 @@ if __name__ == "__main__":
     p0.start()
     time.sleep(1)
     p1 = mp.Process(target=start_node, args=(["A", "B"], ["C", "D"]))
-    p2 = mp.Process(target=start_node, args=(["C", "D"], ["A", "B"]))
+    p2 = mp.Process(target=start_node, args=(["C", "D"], ["A", "B", "C", "D"]))
     p1.start()
     time.sleep(1)
     print("Starting second node")
