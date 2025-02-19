@@ -22,7 +22,7 @@ from .type import (
     ResponseType,
     TopicName,
 )
-from .utils import search_for_master_node
+from .utils import search_for_master_node, send_bytes_request
 
 
 class LanComNode(AbstractNode):
@@ -57,7 +57,7 @@ class LanComNode(AbstractNode):
             "serviceList": [],
             "subscriberList": [],
         }
-        self.service_cbs: Dict[str, Callable[[bytes], Awaitable]] = {}
+        self.service_cbs: Dict[str, Callable[[bytes], bytes]] = {}
         self.log_node_state()
 
     def log_node_state(self):
@@ -105,9 +105,10 @@ class LanComNode(AbstractNode):
                 f"tcp://{self.master_ip}:{MASTER_SERVICE_PORT}"
             )
             node_id = self.local_info["nodeID"]
-            request_socket.send_string(
-                f"{MasterReqType.NODE_OFFLINE.value}|{node_id}"
+            request_socket.send_multipart(
+                [MasterReqType.NODE_OFFLINE.value.encode(), node_id.encode()]
             )
+            # request_socket.send_string(f"{MasterReqType.NODE_OFFLINE.value}|{node_id}")
         except Exception as e:
             logger.error(f"Error sending offline request to master: {e}")
             traceback.print_exc()
@@ -164,10 +165,35 @@ class LanComNode(AbstractNode):
     async def send_node_request_to_master(
         self, request_type: str, message: str
     ) -> str:
-        result = await self.send_request(
-            request_type, self.master_ip, MASTER_SERVICE_PORT, message
+        addr = f"tcp://{self.master_ip}:{MASTER_SERVICE_PORT}"
+        result = await send_bytes_request(
+            addr, [request_type.encode(), message.encode()]
         )
-        return result
+        return result.decode()
+
+    def check_topic(self, topic_name: str) -> Optional[List[ComponentInfo]]:
+        future = self.submit_loop_task(
+            self.send_node_request_to_master,
+            False,
+            MasterReqType.CHECK_TOPIC.value,
+            topic_name,
+        )
+        result = future.result()
+        if result == ResponseType.EMPTY.value:
+            return None
+        return loads(result)
+
+    def check_service(self, service_name: str) -> Optional[ComponentInfo]:
+        future = self.submit_loop_task(
+            self.send_node_request_to_master,
+            False,
+            MasterReqType.CHECK_SERVICE.value,
+            service_name,
+        )
+        result = future.result()
+        if result == ResponseType.EMPTY.value:
+            return None
+        return loads(result)
 
 
 def start_master_node(node_ip: str) -> LanComMaster:

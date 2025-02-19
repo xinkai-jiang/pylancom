@@ -29,7 +29,7 @@ from .type import (
     ServiceName,
     TopicName,
 )
-from .utils import HashIdentifier, IPAddress, bytes2str, str2bytes
+from .utils import HashIdentifier, IPAddress, bytes2str, dict2bytes, str2bytes
 
 
 class NodesInfoManager:
@@ -42,16 +42,18 @@ class NodesInfoManager:
     def get_nodes_info(self) -> Dict[HashIdentifier, NodeInfo]:
         return self.nodes_info
 
-    def check_service(self, service_name: ServiceName) -> Optional[NodeInfo]:
-        for info in self.nodes_info.values():
-            if service_name in info["serviceList"]:
-                return info
+    def check_service(
+        self, service_name: ServiceName
+    ) -> Optional[ComponentInfo]:
+        if service_name in self.services_info:
+            return self.services_info[service_name]
         return None
 
-    def check_topic(self, topic_name: TopicName) -> Optional[NodeInfo]:
-        for info in self.nodes_info.values():
-            if topic_name in info["topicList"]:
-                return info
+    def check_topic(
+        self, topic_name: TopicName
+    ) -> Optional[List[ComponentInfo]]:
+        if topic_name in self.publishers_info:
+            return self.publishers_info[topic_name]
         return None
 
     def update_node(self, info: NodeInfo):
@@ -146,6 +148,8 @@ class LanComMaster(AbstractNode):
             MasterReqType.REGISTER_NODE.value: self.register_node,
             MasterReqType.NODE_OFFLINE.value: self.node_offline,
             MasterReqType.GET_NODES_INFO.value: self.get_nodes_info,
+            MasterReqType.CHECK_TOPIC.value: self.check_topic,
+            MasterReqType.CHECK_SERVICE.value: self.check_service,
         }
         self.submit_loop_task(
             self.service_loop, False, self.node_socket, node_service_cb
@@ -207,6 +211,21 @@ class LanComMaster(AbstractNode):
     def get_nodes_info(self, msg: bytes) -> bytes:
         nodes_info = self.nodes_info_manager.get_nodes_info()
         return dumps(nodes_info).encode()
+
+    def check_service(self, request: bytes) -> bytes:
+        service_name = bytes2str(request)
+        service_info = self.nodes_info_manager.check_service(service_name)
+        if service_info:
+            return dict2bytes(service_info)  # type: ignore
+        return str2bytes(ResponseType.EMPTY.value)
+
+    def check_topic(self, request: bytes) -> bytes:
+        topic_name = bytes2str(request)
+        publishers_info = self.nodes_info_manager.check_topic(topic_name)
+        if publishers_info:
+            # NOTE: Unity json parser cannot parse a list
+            return dict2bytes({"publishers": publishers_info})
+        return str2bytes(ResponseType.EMPTY.value)
 
 
 def start_master_node_task(node_ip: IPAddress) -> None:

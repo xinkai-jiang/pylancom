@@ -20,7 +20,11 @@ from .type import (
     ComponentTypeEnum,
     HashIdentifier,
 )
-from .utils import create_hash_identifier, get_zmq_socket_port
+from .utils import (
+    create_hash_identifier,
+    get_zmq_socket_port,
+    send_bytes_request,
+)
 
 
 class AbstractComponent(abc.ABC):
@@ -73,9 +77,9 @@ class Publisher(AbstractComponent):
         if topic_name in self.node.local_info["topicList"]:
             raise RuntimeError("Topic has been registered in the local node")
         # TODO: check if the topic is already registered
-        # if self.node.check_topic(topic_name) is not None:
-        #     logger.warning(f"Topic {topic_name} is already registered")
-        #     return
+        if self.node.check_topic(topic_name) is not None:
+            logger.warning(f"Topic {topic_name} is already registered")
+            return
         self.set_up_socket(self.node.pub_socket)
         self.node.local_info["topicList"].append(self.info)
         self.socket = self.node.pub_socket
@@ -168,7 +172,6 @@ class ByteStreamer(Streamer):
 MessageT = Union[bytes, str, dict]
 
 
-# TODO: test this class
 class Subscriber(AbstractComponent):
     def __init__(
         self,
@@ -204,9 +207,7 @@ class Subscriber(AbstractComponent):
                 # Invoke the callback
                 self.callback(self.decoder(msg))
             except Exception as e:
-                logger.error(
-                    f"Error in subscriber of topic '{self.name}': {e}"
-                )
+                logger.error(f"Error from topic '{self.name}' subscriber: {e}")
                 traceback.print_exc()
 
     def on_shutdown(self) -> None:
@@ -255,8 +256,9 @@ class Service(AbstractComponent):
         self.node.local_info["serviceList"].append(self.info)
         self.node.service_cbs[self.name] = self.callback
         self.handle_request = callback
+        logger.info(f'"{self.name}" Service is started')
 
-    async def callback(self, msg: bytes):
+    def callback(self, msg: bytes) -> bytes:
         request = self.decoder(msg)
         result = self.handle_request(request)
         # TODO: not sure if we need to use the executor
@@ -267,8 +269,89 @@ class Service(AbstractComponent):
         #     timeout=5.0,
         # )
         # TODO: check if the result is valid
-        await self.socket.send(self.encoder(result))  # type: ignore
+        return self.encoder(result)  # type: ignore
+        # await self.socket.send(self.encoder(result))
 
     def on_shutdown(self):
         self.node.local_info["serviceList"].remove(self.info)
         logger.info(f'"{self.name}" Service is stopped')
+
+
+class ServiceProxy:
+    @staticmethod
+    def send_service_request(
+        service_component: ComponentInfo,
+        request_type: Type[RequestT],
+        response_type: Type[ResponseT],
+        request: RequestT,
+        timeout: float = 5.0,
+    ) -> Optional[ResponseT]:
+        if request_type is bytes:
+            request = cast(bytes, request)
+        elif request_type is str:
+            request = utils.str2bytes(cast(str, request))
+        elif request_type is dict:
+            request = utils.dict2bytes(cast(dict, request))
+        else:
+            raise ValueError("Unsupported request type")
+        if LanComNode.instance is None:
+            raise ValueError("Lancom Node is not initialized")
+        node = LanComNode.instance
+        addr = f"tcp://{service_component['ip']}:{service_component['port']}"
+        response = node.submit_loop_task(
+            send_bytes_request,
+            True,
+            addr,
+            [service_component["name"].encode(), request],
+        )
+        # response = future.result(timeout)
+        print(f"Response: {response}")
+        if not isinstance(response, bytes):
+            logger.warning(f"Service {service_component['name']} is not exist")
+            return None
+        if response_type is bytes:
+            return cast(ResponseT, response)
+        elif response_type is str:
+            return cast(ResponseT, utils.bytes2str(response))
+        elif response_type is dict:
+            return cast(ResponseT, utils.bytes2dict(response))
+        else:
+            raise ValueError("Unsupported response type")
+
+    @staticmethod
+    def request(
+        service_name: str,
+        request_type: Type[RequestT],
+        response_type: Type[ResponseT],
+        request: RequestT,
+        timeout: float = 5.0,
+    ) -> Optional[ResponseT]:
+        """
+        Convenience method to perform a service request in one call.
+
+        It chooses the appropriate encoder and decoder based on the request
+        and response types. Supported types are: bytes, str, and dict.
+
+        :param service_name: Name of the target service.
+        :param request_type: The type of the request (e.g., str, dict, bytes).
+        :param response_type: The type of the response (e.g., str, dict, bytes).
+        :param request: The request data.
+        :param endpoint: The ZeroMQ endpoint of the service.
+        :param timeout: Maximum time to wait for a response.
+        :return: The decoded response.
+        """
+        if LanComNode.instance is None:
+            raise ValueError("Lancom Node is not initialized")
+        node = LanComNode.instance
+        service_component = node.check_service(service_name)
+        if service_component is None:
+            logger.warning(f"Service {service_name} is not exist")
+            return None
+        result = ServiceProxy.send_service_request(
+            service_component,
+            request_type,
+            response_type,
+            request,
+            timeout,
+        )
+        return result  # type: ignore

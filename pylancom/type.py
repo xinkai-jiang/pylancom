@@ -26,7 +26,9 @@ class MasterReqType(Enum):
     REGISTER_TOPIC = "REGISTER_TOPIC"
     REGISTER_SERVICE = "REGISTER_SERVICE"
     GET_NODES_INFO = "GET_NODES_INFO"
-    SERVICE_INFO = "REGISTER_NODE"
+    SERVICE_INFO = "SERVICE_INFO"
+    CHECK_TOPIC = "CHECK_TOPIC"
+    CHECK_SERVICE = "CHECK_SERVICE"
 
 
 class NodeReqType(Enum):
@@ -38,6 +40,7 @@ class ResponseType(Enum):
     SUCCESS = "SUCCESS"
     ERROR = "ERROR"
     TIMEOUT = "TIMEOUT"
+    EMPTY = "EMPTY"
 
 
 class ComponentInfo(TypedDict):

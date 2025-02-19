@@ -113,6 +113,7 @@ def search_for_master_node(
         None otherwise.
     """
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server_socket:
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server_socket.bind((ip, port))  # Listen on all interfaces
         server_socket.settimeout(timeout)  # Set a timeout
 
@@ -145,17 +146,17 @@ def search_for_master_node(
 #     return response
 
 
-async def send_request_async(
-    addr: str, message: str, timeout: float = 5.0
-) -> str:
+async def send_bytes_request(
+    addr: str, msgs: List[bytes], timeout: float = 5.0
+) -> bytes:
     try:
         sock = zmq.asyncio.Context().socket(zmq.REQ)
         sock.connect(addr)
         # Send the message; you can also wrap this in wait_for if needed.
-        await sock.send_string(message)
+        await sock.send_multipart(msgs)
 
         # Wait for a response with a timeout.
-        response = await asyncio.wait_for(sock.recv_string(), timeout=timeout)
+        response = await asyncio.wait_for(sock.recv(), timeout=timeout)
         return response
     except asyncio.TimeoutError as e:
         raise asyncio.TimeoutError(
@@ -163,3 +164,4 @@ async def send_request_async(
         ) from e
     finally:
         sock.disconnect(addr)
+        sock.close()
