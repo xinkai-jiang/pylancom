@@ -3,7 +3,6 @@ from __future__ import annotations
 import abc
 import asyncio
 import concurrent.futures
-import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
@@ -19,16 +18,16 @@ from .utils import create_hash_identifier, send_bytes_request
 
 
 class AbstractNode(abc.ABC):
-    # instance: Optional[AbstractNode] = None
-
     def __init__(self, node_ip: IPAddress, socket_port: Port = 0) -> None:
         super().__init__()
+        self.node_ip = node_ip
         self.zmq_context: AsyncContext = zmq.asyncio.Context()  # type: ignore
-        self.node_socket = self.create_socket(zmq.REP)  # type: ignore
-        self.node_socket.bind(f"tcp://{node_ip}:{socket_port}")
-        self.request_socket = self.create_socket(zmq.REQ)
+        self.node_socket = self.create_socket(zmq.REP)
+        self.node_socket.bind(f"tcp://{self.node_ip}:{socket_port}")
         self.executor = ThreadPoolExecutor(max_workers=10)
         self.id = create_hash_identifier()
+        self.running = False
+        self.start_spin_task()
 
     def create_socket(self, socket_type: int) -> zmq.asyncio.Socket:
         return self.zmq_context.socket(socket_type)
@@ -46,14 +45,14 @@ class AbstractNode(abc.ABC):
             return future.result()
         return future
 
-    def spin(self, block: bool = True) -> None:
-        if block:
-            self.spin_task()
-        else:
-            thread = threading.Thread(target=self.spin_task, daemon=True)
-            thread.start()
-            while hasattr(self, "loop") is False:
-                time.sleep(0.05)
+    def spin(self) -> None:
+        while self.running:
+            time.sleep(0.05)
+
+    def start_spin_task(self) -> None:
+        self.executor.submit(self.spin_task)
+        while hasattr(self, "loop") is False:
+            time.sleep(0.05)
 
     def spin_task(self) -> None:
         try:
@@ -120,7 +119,6 @@ class AbstractNode(abc.ABC):
                 # result = services[service_name](request)
                 # logger.debug(service_name, result.decode())
                 await service_socket.send(result)
-            # TODO: fix the timeout issue
             except asyncio.TimeoutError:
                 logger.error("Timeout: callback function took too long")
                 await service_socket.send(ResponseType.TIMEOUT.value)

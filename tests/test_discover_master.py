@@ -17,6 +17,7 @@ def test_search_for_master_node():
 
 def test_master_broadcast():
     try:
+        print("Starting master node")
         master_node = start_master_node("127.0.0.1")
         master_node.spin()
     except KeyboardInterrupt:
@@ -29,7 +30,7 @@ def start_node_task(num: int):
         node_name = f"Node_{num}"
         print(f"Starting node {node_name}")
         node = pylancom.init_node(node_name, "127.0.0.1")
-        node.spin(block=True)
+        node.spin()
     except KeyboardInterrupt:
         node.stop_node()
         print(f"Node {node_name} stopped")
@@ -39,7 +40,7 @@ if __name__ == "__main__":
     mp.Process(target=test_master_broadcast).start()
     time.sleep(1)
     node_tasks: List[mp.Process] = []
-    for i in range(14):
+    for i in range(6):
         task = mp.Process(target=start_node_task, args=(i,))
         # task = mp.Process(target=test_search_for_master_node)
         task.start()

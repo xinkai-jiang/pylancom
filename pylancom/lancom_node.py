@@ -3,6 +3,7 @@ from __future__ import annotations
 import multiprocessing as mp
 import socket
 import struct
+import time
 import traceback
 from asyncio import sleep as async_sleep
 from json import dumps, loads
@@ -40,7 +41,6 @@ class LanComNode(AbstractNode):
         if LanComNode.instance is not None:
             raise Exception("LanComNode already exists")
         LanComNode.instance = self
-        super().__init__(node_ip)
         self.master_ip = master_ip
         self.master_id = None
         self.pub_socket = self.create_socket(zmq.PUB)
@@ -55,13 +55,19 @@ class LanComNode(AbstractNode):
             # "port": utils.get_zmq_socket_port(self.node_socket),
             "port": 0,
             "type": node_type,
-            "topicPort": utils.get_zmq_socket_port(self.pub_socket),
-            "servicePort": utils.get_zmq_socket_port(self.service_socket),
         }
         self.local_publisher: Dict[str, List[ComponentInfo]] = {}
         self.local_subscriber: Dict[str, List[ComponentInfo]] = {}
         self.local_service: Dict[str, ComponentInfo] = {}
         self.service_cbs: Dict[str, Callable[[bytes], bytes]] = {}
+        self.connected = False
+        super().__init__(node_ip)
+
+    def start_spin_task(self) -> None:
+        super().start_spin_task()
+        # waiting until this node is connected to the master node
+        while not self.connected:
+            time.sleep(0.05)
 
     def log_node_state(self):
         for key, value in self.local_info.items():
@@ -102,32 +108,17 @@ class LanComNode(AbstractNode):
         if master_id == self.master_id:
             return
         self.master_id, self.master_ip = master_id, master_ip
-        # self.send_node_request(
-        #     MasterReqType.REGISTER_NODE.value, dumps(self.local_info)
-        # )
-        # await send_node_request_to_master_async(
-        #     self.master_ip, MasterReqType.REGISTER_NODE.value, dumps(self.local_info)
-        # )
-        # publisher_info: Dict[TopicName, List[ComponentInfo]] = loads(msg)
-        # for topic_name, publisher_list in publisher_info.items():
-        #     if topic_name not in self.sub_sockets.keys():
-        #         continue
-        #     for topic_info in publisher_list:
-        #         self.subscribe_topic(topic_name, topic_info)
         logger.debug(
-            f"{self.local_info['name']} Connecting to master node at {self.master_ip}"
+            f"Node {self.local_info['name']} Connecting to",
+            " master node at {self.master_ip}",
         )
 
     def initialize_event_loop(self):
-        self.submit_loop_task(
-            self.service_loop, False, self.service_socket, self.service_cbs
-        )
+        self.submit_loop_task(self.service_loop, False, self.service_cbs)
         node_service_cb: Dict[str, Callable[[bytes], bytes]] = {
             NodeReqType.UPDATE_SUBSCRIPTION.value: self.update_subscription,
         }
-        self.submit_loop_task(
-            self.service_loop, False, self.node_socket, node_service_cb
-        )
+        self.submit_loop_task(self.service_loop, False, node_service_cb)
         self.submit_loop_task(self.listen_master_loop, False)
 
     def spin_task(self) -> None:

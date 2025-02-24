@@ -126,9 +126,9 @@ class NodesInfoManager:
 
 class LanComMaster(AbstractNode):
     def __init__(self, master_ip: IPAddress) -> None:
+        self.master_ip = master_ip
         super().__init__(master_ip, MASTER_SERVICE_PORT)
         self.nodes_info_manager = NodesInfoManager(self.id)
-        self.master_ip = master_ip
 
     async def broadcast_loop(self):
         # set up udp socket

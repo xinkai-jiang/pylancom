@@ -73,19 +73,17 @@ class Publisher(AbstractComponent):
             ComponentTypeEnum.PUBLISHER.value,
             with_local_namespace,
         )
-        # if self.node.check_topic(topic_name) is not None:
-        #     logger.warning(f"Topic {topic_name} is already registered")
-        #     return
         self.set_up_socket(self.node.pub_socket)
         self.node.register_publisher(self.info)
         # self.node.local_info["topicList"].append(self.info)
         self.socket = self.node.pub_socket
 
     def publish_bytes(self, bytes_msg: bytes) -> None:
-        self.node.submit_loop_task(self.send_bytes_async, False, bytes_msg)
+        # in case the publish too much messages
+        self.node.submit_loop_task(self.send_bytes_async, True, bytes_msg)
 
     def publish_string(self, msg: str) -> None:
-        self.node.submit_loop_task(self.send_bytes_async, False, msg.encode())
+        self.publish_bytes(msg.encode())
 
     def publish_dict(self, data: Dict) -> None:
         self.publish_string(dumps(data))

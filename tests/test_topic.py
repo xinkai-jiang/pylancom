@@ -75,7 +75,7 @@ if __name__ == "__main__":
     p1 = mp.Process(target=start_node, args=(["A", "B"], ["C", "D"]))
     p2 = mp.Process(target=start_node, args=(["C", "D"], ["A", "B"]))
     p1.start()
-    time.sleep(1)
+    time.sleep(5)
     print("Starting second node")
     p2.start()
     p1.join()
