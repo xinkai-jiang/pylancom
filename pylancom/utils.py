@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 import zmq
 import zmq.asyncio
 
-from .config import DISCOVERY_PORT
+from .config import DISCOVERY_PORT, MULTICAST_ADDR
 from .type import HashIdentifier, IPAddress
 
 
@@ -99,7 +99,7 @@ def calculate_broadcast_addr(ip_addr: IPAddress) -> IPAddress:
 
 
 def search_for_master_node(
-    ip: str = "0.0.0.0", port: int = DISCOVERY_PORT, timeout: float = 1.0
+    ip: str = "0.0.0.0", port: int = DISCOVERY_PORT, timeout: float = 5.0
 ) -> Optional[str]:
     """
     Listens on the given UDP port for incoming messages.
@@ -112,13 +112,18 @@ def search_for_master_node(
         str or None: Sender's IP address if a message is received,
         None otherwise.
     """
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server_socket:
-        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server_socket.bind((ip, port))  # Listen on all interfaces
-        server_socket.settimeout(timeout)  # Set a timeout
-
+    with socket.socket(
+        socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP
+    ) as _socket:
+        _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        _socket.bind(("", port))  # Listen on all interfaces
+        group = socket.inet_aton(MULTICAST_ADDR)
+        mreq = struct.pack("4sL", group, socket.INADDR_ANY)
+        _socket.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        _socket.settimeout(timeout)  # Set a timeout
         try:
-            data, addr = server_socket.recvfrom(1024)
+            data, addr = _socket.recvfrom(1024)
             if data:
                 return addr[0]  # Return sender's IP address
         except socket.timeout:
@@ -147,7 +152,7 @@ def search_for_master_node(
 
 
 async def send_bytes_request(
-    addr: str, msgs: List[bytes], timeout: float = 5.0
+    addr: str, msgs: List[bytes], timeout: float = 1.0
 ) -> bytes:
     try:
         sock = zmq.asyncio.Context().socket(zmq.REQ)

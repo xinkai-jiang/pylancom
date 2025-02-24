@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+import socket
+import struct
 import traceback
+from asyncio import sleep as async_sleep
 from json import dumps, loads
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
@@ -11,7 +14,7 @@ from zmq.asyncio import Socket as AsyncSocket
 
 from . import utils
 from .abstract_node import AbstractNode
-from .config import MASTER_SERVICE_PORT, MASTER_TOPIC_PORT
+from .config import DISCOVERY_PORT, MASTER_SERVICE_PORT, MULTICAST_ADDR
 from .lancom_master import LanComMaster
 from .log import logger
 from .type import (
@@ -31,14 +34,14 @@ class LanComNode(AbstractNode):
     def __init__(
         self, node_name: str, node_ip: str, node_type: str = "LanComNode"
     ) -> None:
-        master_ip = search_for_master_node()
+        # master_ip = search_for_master_node()
+        # if master_ip is None:
+        #     raise Exception("Master node not found")
         if LanComNode.instance is not None:
             raise Exception("LanComNode already exists")
         LanComNode.instance = self
         super().__init__(node_ip)
-        if master_ip is None:
-            raise Exception("Master node not found")
-        self.master_ip = master_ip
+        # self.master_ip = master_ip
         self.master_id = None
         self.pub_socket = self.create_socket(zmq.PUB)
         self.pub_socket.bind(f"tcp://{node_ip}:0")
@@ -49,7 +52,8 @@ class LanComNode(AbstractNode):
             "name": node_name,
             "nodeID": utils.create_hash_identifier(),
             "ip": node_ip,
-            "port": utils.get_zmq_socket_port(self.node_socket),
+            # "port": utils.get_zmq_socket_port(self.node_socket),
+            "port": 0,
             "type": node_type,
             "topicPort": utils.get_zmq_socket_port(self.pub_socket),
             "topicList": [],
@@ -58,26 +62,56 @@ class LanComNode(AbstractNode):
             "subscriberList": [],
         }
         self.service_cbs: Dict[str, Callable[[bytes], bytes]] = {}
-        self.log_node_state()
+        # self.log_node_state()
 
     def log_node_state(self):
         for key, value in self.local_info.items():
             print(f"    {key}: {value}")
 
-    async def update_master_state_loop(self):
-        update_socket = self.create_socket(socket_type=zmq.SUB)
-        update_socket.connect(f"tcp://{self.master_ip}:{MASTER_TOPIC_PORT}")
-        update_socket.setsockopt_string(zmq.SUBSCRIBE, "")
-        try:
-            while self.running:
-                message = await update_socket.recv_string()
-                await self.update_master_state(message)
-                # await async_sleep(0.01)
-        except Exception as e:
-            logger.error(
-                f"Error occurred in update_connection_state_loop: {e}"
+    async def listen_master_loop(self):
+        logger.info("Master Node is listening for multicast messages")
+        with socket.socket(
+            socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP
+        ) as _socket:
+            _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            _socket.bind(("", DISCOVERY_PORT))
+            group = socket.inet_aton(MULTICAST_ADDR)
+            mreq = struct.pack("4sL", group, socket.INADDR_ANY)
+            _socket.setsockopt(
+                socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq
             )
-            traceback.print_exc()
+            while self.running:
+                try:
+                    data, addr = _socket.recvfrom(1024)
+                    msg = data.decode()
+                    # logger.debug(f"Received multicast message: {addr}")
+                    if msg.startswith("LancomMaster"):
+                        await self.update_master_state(data.decode())
+                except Exception as e:
+                    logger.error(f"Error receiving multicast message: {e}")
+                await async_sleep(0.5)
+        logger.info("Multicast receiving has been stopped")
+
+    async def update_master_state(self, message: str) -> None:
+        parts = message.split("|")
+        if len(parts) != 4:
+            return
+        # TODO: check the version
+        version, master_id, master_ip = parts[1:]
+        if master_id == self.master_id:
+            return
+        self.master_id, self.master_ip = master_id, master_ip
+        msg = await self.send_node_request_to_master(
+            MasterReqType.REGISTER_NODE.value, dumps(self.local_info)
+        )
+        publisher_info: Dict[TopicName, List[ComponentInfo]] = loads(msg)
+        for topic_name, publisher_list in publisher_info.items():
+            if topic_name not in self.sub_sockets.keys():
+                continue
+            for topic_info in publisher_list:
+                self.subscribe_topic(topic_name, topic_info)
+        logger.debug(f"Connecting to master node at {self.master_ip}")
 
     def initialize_event_loop(self):
         self.submit_loop_task(
@@ -89,7 +123,7 @@ class LanComNode(AbstractNode):
         self.submit_loop_task(
             self.service_loop, False, self.node_socket, node_service_cb
         )
-        self.submit_loop_task(self.update_master_state_loop, False)
+        self.submit_loop_task(self.listen_master_loop, False)
 
     def spin_task(self) -> None:
         logger.info(f"Node {self.local_info['name']} is running...")
@@ -115,21 +149,6 @@ class LanComNode(AbstractNode):
         super().stop_node()
         self.node_socket.close()
         logger.info(f"Node {self.local_info['name']} is stopped")
-
-    async def update_master_state(self, message: str) -> None:
-        if message == self.master_id:
-            return
-        self.master_id = message
-        logger.debug(f"Connecting to master node at {self.master_ip}")
-        msg = await self.send_node_request_to_master(
-            MasterReqType.REGISTER_NODE.value, dumps(self.local_info)
-        )
-        publisher_info: Dict[TopicName, List[ComponentInfo]] = loads(msg)
-        for topic_name, publisher_list in publisher_info.items():
-            if topic_name not in self.sub_sockets.keys():
-                continue
-            for topic_info in publisher_list:
-                self.subscribe_topic(topic_name, topic_info)
 
     def update_subscription(self, msg: bytes) -> bytes:
         publisher_info: ComponentInfo = utils.loads(msg.decode())
@@ -214,6 +233,6 @@ def init_node(node_name: str, node_ip: str) -> LanComNode:
     #     return MasterNode(node_name, node_ip)
     master_ip = search_for_master_node()
     if master_ip is None:
-        logger.info("Master node not found, starting a new master node...")
+        logger.warning("Master node not found, starting a new master node...")
         mp.Process(target=master_node_task, args=(node_ip,)).start()
     return LanComNode(node_name, node_ip)

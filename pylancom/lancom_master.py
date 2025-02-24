@@ -1,23 +1,18 @@
 from __future__ import annotations
 
 import socket
-import struct
 import time
 import traceback
 from asyncio import sleep as async_sleep
 from json import dumps, loads
-from socket import AF_INET, SO_BROADCAST, SOCK_DGRAM, SOL_SOCKET
 from typing import Callable, Dict, List, Optional
-
-import zmq
-import zmq.asyncio
 
 from .abstract_node import AbstractNode
 from .config import (
     __VERSION__,
     DISCOVERY_PORT,
     MASTER_SERVICE_PORT,
-    MASTER_TOPIC_PORT,
+    MULTICAST_ADDR,
 )
 from .log import logger
 from .type import (
@@ -120,27 +115,29 @@ class NodesInfoManager:
 
 
 class LanComMaster(AbstractNode):
-    def __init__(self, node_ip: IPAddress) -> None:
-        super().__init__(node_ip, MASTER_SERVICE_PORT)
+    def __init__(self, master_ip: IPAddress) -> None:
+        super().__init__(master_ip, MASTER_SERVICE_PORT)
         self.nodes_info_manager = NodesInfoManager(self.id)
-        self.node_ip = node_ip
+        self.master_ip = master_ip
 
     async def broadcast_loop(self):
-        logger.info(f"Master Node is broadcasting at {self.node_ip}")
         # set up udp socket
-        with socket.socket(AF_INET, SOCK_DGRAM) as _socket:
-            _socket.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)
-            # calculate broadcast ip
-            ip_bin = struct.unpack("!I", socket.inet_aton(self.node_ip))[0]
-            netmask = socket.inet_aton("255.255.255.0")
-            netmask_bin = struct.unpack("!I", netmask)[0]
-            broadcast_bin = ip_bin | ~netmask_bin & 0xFFFFFFFF
-            broadcast_ip = socket.inet_ntoa(struct.pack("!I", broadcast_bin))
+        with socket.socket(
+            socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP
+        ) as _socket:
+            _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            _socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
+            _socket.setsockopt(
+                socket.IPPROTO_IP,
+                socket.IP_MULTICAST_IF,
+                socket.inet_aton(self.master_ip),
+            )
             while self.running:
-                msg = f"LancomMaster|{__VERSION__}|{self.id}|{self.node_ip}"
-                _socket.sendto(msg.encode(), (broadcast_ip, DISCOVERY_PORT))
-                await async_sleep(0.1)
-        logger.info("Broadcasting has been stopped")
+                msg = f"LancomMaster|{__VERSION__}|{self.id}|{self.master_ip}"
+                _socket.sendto(msg.encode(), (MULTICAST_ADDR, DISCOVERY_PORT))
+                await async_sleep(1)
+        logger.info("Multicasting has been stopped")
 
     def initialize_event_loop(self):
         node_service_cb: Dict[str, Callable[[bytes], bytes]] = {
@@ -155,14 +152,14 @@ class LanComMaster(AbstractNode):
             self.service_loop, False, self.node_socket, node_service_cb
         )
         self.submit_loop_task(self.broadcast_loop, False)
-        self.submit_loop_task(self.publish_master_state_loop, False)
+        # self.submit_loop_task(self.publish_master_state_loop, False)
 
-    async def publish_master_state_loop(self):
-        pub_socket = zmq.asyncio.Context().socket(zmq.PUB)  # type: ignore
-        pub_socket.bind(f"tcp://{self.node_ip}:{MASTER_TOPIC_PORT}")
-        while self.running:
-            pub_socket.send_string(self.id)
-            await async_sleep(0.1)
+    # async def publish_master_state_loop(self):
+    #     pub_socket = zmq.asyncio.Context().socket(zmq.PUB)  # type: ignore
+    #     pub_socket.bind(f"tcp://{self.node_ip}:{MASTER_TOPIC_PORT}")
+    #     while self.running:
+    #         pub_socket.send_string(self.id)
+    #         await async_sleep(0.1)
 
     def stop_node(self):
         super().stop_node()
@@ -173,6 +170,7 @@ class LanComMaster(AbstractNode):
 
     def register_node(self, msg: bytes) -> bytes:
         node_info: NodeInfo = loads(bytes2str(msg))
+        logger.debug(f"Registering node: {node_info}")
         for topic_info in node_info["topicList"]:
             subscribers_info = self.nodes_info_manager.get_subscribers()
             self.nodes_info_manager.register_publisher(topic_info)

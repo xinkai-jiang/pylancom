@@ -107,7 +107,7 @@ class AbstractNode(abc.ABC):
                 logger.error(f"Service {service_name} is not available")
             try:
                 result = services[service_name](request)
-                print(service_name, result)
+                # logger.debug(service_name, result.decode())
                 await service_socket.send(result)
             # TODO: fix the timeout issue
             except asyncio.TimeoutError:

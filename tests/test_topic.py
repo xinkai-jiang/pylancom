@@ -1,3 +1,4 @@
+import argparse
 import multiprocessing as mp
 import time
 from typing import Callable, Dict, List
@@ -9,8 +10,8 @@ from pylancom import start_master_node
 from pylancom.component import Publisher, Subscriber
 
 
-def test_master_node_broadcast():
-    master_node = start_master_node("127.0.0.1")
+def test_master_node_broadcast(ip: str = "127.0.0.1"):
+    master_node = start_master_node(ip)
     master_node.spin()
 
 
@@ -31,6 +32,7 @@ def create_subscriber_callback(
 ) -> Callable[[str], None]:
     def subscriber_callback(msg: str) -> None:
         print(f"Subscriber {topic_name} received message: {msg}")
+        assert msg == f"{topic_name} message, Number 0"
 
     return subscriber_callback
 
@@ -52,7 +54,7 @@ def start_node(publisher_list: List[str], subscriber_list: List[str]):
         while True:
             time.sleep(1)
             for name, publisher in publisher_dict.items():
-                # print(f"Publishing message from {name}")
+                print(f"Publishing message from {name}")
                 publisher.publish_string(f"{name} message, Number {i}")
             i += 1
     except KeyboardInterrupt:
@@ -64,9 +66,12 @@ def start_node(publisher_list: List[str], subscriber_list: List[str]):
 
 
 if __name__ == "__main__":
-    p0 = mp.Process(target=test_master_node_broadcast)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ip", type=str, default="127.0.0.1")
+    args = parser.parse_args()
+    p0 = mp.Process(target=test_master_node_broadcast, args=(args.ip,))
     p0.start()
-    time.sleep(1)
+    time.sleep(2)
     p1 = mp.Process(target=start_node, args=(["A", "B"], ["C", "D"]))
     p2 = mp.Process(target=start_node, args=(["A", "D"], ["A", "B", "C", "D"]))
     p1.start()
