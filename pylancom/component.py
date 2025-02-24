@@ -73,15 +73,12 @@ class Publisher(AbstractComponent):
             ComponentTypeEnum.PUBLISHER.value,
             with_local_namespace,
         )
-        # in case the topic is not updated to the master node
-        if topic_name in self.node.local_info["topicList"]:
-            raise RuntimeError("Topic has been registered in the local node")
-        # TODO: check if the topic is already registered
-        if self.node.check_topic(topic_name) is not None:
-            logger.warning(f"Topic {topic_name} is already registered")
-            return
+        # if self.node.check_topic(topic_name) is not None:
+        #     logger.warning(f"Topic {topic_name} is already registered")
+        #     return
         self.set_up_socket(self.node.pub_socket)
-        self.node.local_info["topicList"].append(self.info)
+        self.node.register_publisher(self.info)
+        # self.node.local_info["topicList"].append(self.info)
         self.socket = self.node.pub_socket
 
     def publish_bytes(self, bytes_msg: bytes) -> None:
@@ -94,7 +91,8 @@ class Publisher(AbstractComponent):
         self.publish_string(dumps(data))
 
     def on_shutdown(self) -> None:
-        self.node.local_info["topicList"].remove(self.info)
+        self.node.local_publisher.pop(self.name)
+        self.socket.close()
 
     async def send_bytes_async(self, bytes_msg: bytes) -> None:
         # await self.socket.send(msg)
@@ -193,8 +191,8 @@ class Subscriber(AbstractComponent):
             raise ValueError("Request type is not supported")
         self.connected = False
         self.callback = callback
-        self.node.local_info["subscriberList"].append(self.info)
-        self.node.register_subscription(self.name, self.socket, self.listen)
+        # self.node.local_info["subscriberList"].append(self.info)
+        self.node.register_subscriber(self.info, self.socket, self.listen)
         self.running = True
 
     async def listen(self) -> None:
@@ -229,7 +227,7 @@ class Service(AbstractComponent):
     ) -> None:
         super().__init__(service_name, ComponentTypeEnum.SERVICE.value, False)
         self.set_up_socket(self.node.service_socket)
-        if service_name in self.node.local_info["serviceList"]:
+        if service_name in self.node.local_service:
             raise RuntimeError("Service has been registered in the local node")
         # TODO: check if the service is already registered
         # if self.node.check_service(service_name) is not None:
@@ -253,7 +251,7 @@ class Service(AbstractComponent):
             self.encoder = utils.dict2bytes
         else:
             raise ValueError("Response type is not supported")
-        self.node.local_info["serviceList"].append(self.info)
+        self.node.local_service[self.info["name"]] = self.info
         self.node.service_cbs[self.name] = self.callback
         self.handle_request = callback
         logger.info(f'"{self.name}" Service is started')

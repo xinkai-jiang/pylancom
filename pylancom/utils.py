@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 import zmq
 import zmq.asyncio
 
-from .config import DISCOVERY_PORT, MULTICAST_ADDR
+from .config import DISCOVERY_PORT, MASTER_SERVICE_PORT, MULTICAST_ADDR
 from .type import HashIdentifier, IPAddress
 
 
@@ -131,6 +131,16 @@ def search_for_master_node(
         except Exception:
             traceback.print_exc()
             return None
+
+
+async def send_node_request_to_master_async(
+    master_ip: IPAddress, request_type: str, message: str
+) -> str:
+    addr = f"tcp://{master_ip}:{MASTER_SERVICE_PORT}"
+    result = await send_bytes_request(
+        addr, [request_type.encode(), message.encode()]
+    )
+    return result.decode()
 
 
 # async def send_request_async(

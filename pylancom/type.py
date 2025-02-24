@@ -23,12 +23,12 @@ class MasterReqType(Enum):
     PING = "PING"
     REGISTER_NODE = "REGISTER_NODE"
     NODE_OFFLINE = "NODE_OFFLINE"
-    REGISTER_TOPIC = "REGISTER_TOPIC"
+    REGISTER_PUBLISHER = "REGISTER_PUBLISHER"
+    REGISTER_SUBSCRIBER = "REGISTER_SUBSCRIBER"
     REGISTER_SERVICE = "REGISTER_SERVICE"
     GET_NODES_INFO = "GET_NODES_INFO"
-    SERVICE_INFO = "SERVICE_INFO"
-    CHECK_TOPIC = "CHECK_TOPIC"
-    CHECK_SERVICE = "CHECK_SERVICE"
+    GET_TOPIC_INFO = "GET_TOPIC_INFO"
+    GET_SERVICE_INFO = "GET_SERVICE_INFO"
 
 
 class NodeReqType(Enum):
@@ -59,10 +59,10 @@ class NodeInfo(TypedDict):
     type: str
     port: int
     topicPort: int
-    topicList: List[ComponentInfo]
+    # topicList: List[ComponentInfo]
     servicePort: int
-    serviceList: List[ComponentInfo]
-    subscriberList: List[ComponentInfo]
+    # serviceList: List[ComponentInfo]
+    # subscriberList: List[ComponentInfo]
 
 
 class ConnectionState(TypedDict):

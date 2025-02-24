@@ -32,7 +32,7 @@ def create_subscriber_callback(
 ) -> Callable[[str], None]:
     def subscriber_callback(msg: str) -> None:
         print(f"Subscriber {topic_name} received message: {msg}")
-        assert msg == f"{topic_name} message, Number 0"
+        assert msg == f"{topic_name} message"
 
     return subscriber_callback
 
@@ -54,8 +54,8 @@ def start_node(publisher_list: List[str], subscriber_list: List[str]):
         while True:
             time.sleep(1)
             for name, publisher in publisher_dict.items():
-                print(f"Publishing message from {name}")
-                publisher.publish_string(f"{name} message, Number {i}")
+                # print(f"Publishing message from {name}")
+                publisher.publish_string(f"{name} message")
             i += 1
     except KeyboardInterrupt:
         node.stop_node()
@@ -71,9 +71,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     p0 = mp.Process(target=test_master_node_broadcast, args=(args.ip,))
     p0.start()
-    time.sleep(2)
+    time.sleep(1)
     p1 = mp.Process(target=start_node, args=(["A", "B"], ["C", "D"]))
-    p2 = mp.Process(target=start_node, args=(["A", "D"], ["A", "B", "C", "D"]))
+    p2 = mp.Process(target=start_node, args=(["C", "D"], ["A", "B"]))
     p1.start()
     time.sleep(1)
     print("Starting second node")

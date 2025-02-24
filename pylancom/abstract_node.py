@@ -6,6 +6,7 @@ import concurrent.futures
 import threading
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, Union
 
 import zmq
@@ -26,6 +27,7 @@ class AbstractNode(abc.ABC):
         self.node_socket = self.create_socket(zmq.REP)  # type: ignore
         self.node_socket.bind(f"tcp://{node_ip}:{socket_port}")
         self.request_socket = self.create_socket(zmq.REQ)
+        self.executor = ThreadPoolExecutor(max_workers=10)
         self.id = create_hash_identifier()
 
     def create_socket(self, socket_type: int) -> zmq.asyncio.Socket:
@@ -103,10 +105,19 @@ class AbstractNode(abc.ABC):
                 logger.error(f"Error occurred when receiving request: {e}")
                 traceback.print_exc()
             # the zmq service socket is blocked and only run one at a time
+            print(
+                f"Service {service_name} received message: {request.decode()}"
+            )
             if service_name not in services.keys():
                 logger.error(f"Service {service_name} is not available")
             try:
-                result = services[service_name](request)
+                result = await asyncio.wait_for(
+                    self.loop.run_in_executor(
+                        self.executor, services[service_name], request
+                    ),
+                    timeout=2.0,
+                )
+                # result = services[service_name](request)
                 # logger.debug(service_name, result.decode())
                 await service_socket.send(result)
             # TODO: fix the timeout issue
