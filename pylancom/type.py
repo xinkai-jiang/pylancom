@@ -13,12 +13,6 @@ HashIdentifier = str
 ComponentType = str
 
 
-class ComponentTypeEnum(Enum):
-    PUBLISHER = "PUBLISHER"
-    SUBSCRIBER = "SUBSCRIBER"
-    SERVICE = "SERVICE"
-
-
 class MasterReqType(Enum):
     PING = "PING"
     REGISTER_NODE = "REGISTER_NODE"
@@ -43,6 +37,12 @@ class ResponseType(Enum):
     EMPTY = "EMPTY"
 
 
+class ComponentTypeEnum(Enum):
+    PUBLISHER = "PUBLISHER"
+    SUBSCRIBER = "SUBSCRIBER"
+    SERVICE = "SERVICE"
+
+
 class ComponentInfo(TypedDict):
     name: str
     componentID: HashIdentifier
@@ -54,7 +54,8 @@ class ComponentInfo(TypedDict):
 
 class NodeInfo(TypedDict):
     name: str
-    nodeID: HashIdentifier  # hash code since bytes is not JSON serializable
+    nodeID: HashIdentifier
+    infoID: int
     ip: IPAddress
     type: str
     port: int

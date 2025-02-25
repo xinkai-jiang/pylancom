@@ -1,64 +1,102 @@
 from __future__ import annotations
 
-import multiprocessing as mp
+import abc
+import asyncio
 import socket
 import struct
 import time
 import traceback
-from asyncio import sleep as async_sleep
-from json import loads
-from typing import Callable, Dict, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor
+from typing import Callable, Dict
 
-import zmq
 import zmq.asyncio
-from zmq.asyncio import Socket as AsyncSocket
+from zmq.asyncio import Context as AsyncContext
 
-from . import utils
-from .abstract_node import AbstractNode
-from .config import DISCOVERY_PORT, MASTER_SERVICE_PORT, MULTICAST_ADDR
-from .lancom_master import LanComMaster
+from .config import __VERSION__, DISCOVERY_PORT, MULTICAST_ADDR
 from .log import logger
-from .type import (
-    ComponentInfo,
-    MasterReqType,
-    NodeInfo,
-    NodeReqType,
-    ResponseType,
-    TopicName,
+from .protos.node_info_pb2 import (
+    NodeInfo,  # Import the generated NodeInfo class
 )
-from .utils import search_for_master_node, send_node_request_to_master_async
+from .type import IPAddress, Port, ResponseType
+from .utils import (
+    create_hash_identifier,
+    get_zmq_socket_port,
+    send_bytes_request,
+)
 
 
-class LanComNode(AbstractNode):
-    instance: Optional[LanComNode] = None
-
-    def __init__(self, node_name: str, node_ip: str) -> None:
-        master_ip = search_for_master_node()
-        if master_ip is None:
-            raise Exception("Master node not found")
-        if LanComNode.instance is not None:
-            raise Exception("LanComNode already exists")
-        LanComNode.instance = self
-        self.master_ip = master_ip
-        self.master_id = None
+class LanComNode(abc.ABC):
+    def __init__(self, node_name: str, node_ip: IPAddress) -> None:
+        super().__init__()
+        self.node_ip = node_ip
         self.node_name = node_name
-        super().__init__(node_ip)
+        self.id = create_hash_identifier()
+        self.zmq_context: AsyncContext = zmq.asyncio.Context()
+        self.node_socket = self.create_socket(zmq.REP)
+        self.node_socket.bind(f"tcp://{self.node_ip}:0")
+        self.running = False
+        self.executor = ThreadPoolExecutor()
 
-    def start_spin_task(self) -> None:
-        super().start_spin_task()
-        # waiting until this node is connected to the master node
-        while not self.connected:
-            time.sleep(0.05)
+        # Initialize the NodeInfo message
+        self.local_info = NodeInfo()
+        self.local_info.name = self.node_name
+        self.local_info.nodeID = self.id
+        self.local_info.ip = self.node_ip
+        self.local_info.port = get_zmq_socket_port(self.node_socket)
+        self.local_info.type = "LanComNode"
 
-    def log_node_state(self):
-        for key, value in self.local_info.items():
-            print(f"    {key}: {value}")
+        self.loop = asyncio.get_event_loop()
+        self.loop.create_task(self.spin_task())  # Run event loop in background
 
-    async def listen_master_loop(self):
-        logger.info("Master Node is listening for multicast messages")
-        with socket.socket(
-            socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP
-        ) as _socket:
+    def create_socket(self, socket_type: int) -> zmq.asyncio.Socket:
+        return self.zmq_context.socket(socket_type)
+
+    async def spin_task(self) -> None:
+        """Asynchronous task to keep the node running."""
+        self.running = True
+        try:
+            await asyncio.gather(self.multicast_loop(), self.listen_loop())
+        except Exception as e:
+            logger.error(f"Unexpected error in spin_task: {e}")
+            traceback.print_exc()
+
+    async def multicast_loop(self):
+        """Asynchronously sends multicast messages to announce the node."""
+        try:
+            _socket = socket.socket(
+                socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP
+            )
+            _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            _socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
+            _socket.setsockopt(
+                socket.IPPROTO_IP,
+                socket.IP_MULTICAST_IF,
+                socket.inet_aton(self.node_ip),
+            )
+
+            while self.running:
+                current_time = time.strftime("%y-%m-%d-%H-%M-%S")
+                node_info_bytes = self.local_info.SerializeToString()
+                msg = (
+                    f"LancomMaster|{__VERSION__}|{self.id}|".encode()
+                    + node_info_bytes
+                )
+                _socket.sendto(msg, (MULTICAST_ADDR, DISCOVERY_PORT))
+                await asyncio.sleep(1)  # Prevent excessive CPU usage
+
+        except Exception as e:
+            logger.error(f"Multicast error: {e}")
+        finally:
+            _socket.close()
+            logger.info("Multicasting has been stopped")
+
+    async def listen_loop(self):
+        """Asynchronously listens for multicast messages from other nodes."""
+        try:
+            _socket = socket.socket(
+                socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP
+            )
             _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
             _socket.bind(("", DISCOVERY_PORT))
@@ -67,189 +105,140 @@ class LanComNode(AbstractNode):
             _socket.setsockopt(
                 socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq
             )
+
             while self.running:
                 try:
-                    data, addr = _socket.recvfrom(1024)
+                    (
+                        data,
+                        addr,
+                    ) = await asyncio.get_running_loop().run_in_executor(
+                        self.executor, _socket.recvfrom, 1024
+                    )
                     msg = data.decode()
-                    # logger.debug(f"Received multicast message: {addr}")
                     if msg.startswith("LancomMaster"):
-                        await self.update_master_state(data.decode())
+                        await self.update_master_state(msg)
                 except Exception as e:
                     logger.error(f"Error receiving multicast message: {e}")
                     traceback.print_exc()
-                await async_sleep(0.5)
-        logger.info("Multicast receiving has been stopped")
+                await asyncio.sleep(0.5)
+
+        except Exception as e:
+            logger.error(f"Listening loop error: {e}")
+        finally:
+            _socket.close()
+            logger.info("Multicast receiving has been stopped")
 
     async def update_master_state(self, message: str) -> None:
-        parts = message.split("|")
-        if len(parts) != 5:
-            return
-        # TODO: check the version
-        version, master_id, master_ip, _ = parts[1:]
-        if master_id == self.master_id:
-            return
-        self.master_id, self.master_ip = master_id, master_ip
-        logger.debug(
-            f"Node {self.local_info['name']} Connecting to",
-            " master node at {self.master_ip}",
-        )
-
-    def initialize_event_loop(self):
-        self.pub_socket = self.create_socket(zmq.PUB)
-        self.pub_socket.bind(f"tcp://{self.node_ip}:0")
-        self.service_socket = self.create_socket(zmq.REP)
-        self.service_socket.bind(f"tcp://{self.node_ip}:0")
-        self.sub_sockets: Dict[str, List[Tuple[AsyncSocket, Callable]]] = {}
-        self.local_info: NodeInfo = {
-            "name": self.node_name,
-            "nodeID": utils.create_hash_identifier(),
-            "ip": self.node_ip,
-            # "port": utils.get_zmq_socket_port(self.node_socket),
-            "port": 0,
-            "type": "LanComNode",
-            "publishers": [],
-            "subscribers": [],
-            "services": [],
-        }
-        self.service_cbs: Dict[str, Callable[[bytes], bytes]] = {}
-        self.connected = False
-        self.submit_loop_task(self.service_loop, False, self.service_cbs)
-        node_service_cb: Dict[str, Callable[[bytes], bytes]] = {
-            NodeReqType.UPDATE_SUBSCRIPTION.value: self.update_subscription,
-        }
-        self.submit_loop_task(self.service_loop, False, node_service_cb)
-        self.submit_loop_task(self.listen_master_loop, False)
-
-    def spin_task(self) -> None:
-        logger.info(f"Node {self.local_info['name']} is running...")
-        return super().spin_task()
-
-    def stop_node(self):
-        logger.info(f"Stopping node {self.local_info['name']}...")
+        """Processes master node announcements and updates local state."""
         try:
-            # NOTE: the loop will be stopped when pressing Ctrl+C
-            # so we need to create a new socket to send offline request
-            request_socket = zmq.Context().socket(zmq.REQ)
-            request_socket.connect(
-                f"tcp://{self.master_ip}:{MASTER_SERVICE_PORT}"
+            parts = message.split("|")
+            if len(parts) < 4:
+                return
+            _, version, master_id, node_info_bytes = (
+                parts[0],
+                parts[1],
+                parts[2],
+                "|".join(parts[3:]),
             )
-            node_id = self.local_info["nodeID"]
-            request_socket.send_multipart(
-                [MasterReqType.NODE_OFFLINE.value.encode(), node_id.encode()]
+            if master_id == getattr(self, "master_id", None):
+                return
+
+            self.master_id, self.master_ip = master_id, self.node_ip
+            node_info = NodeInfo()
+            node_info.ParseFromString(node_info_bytes.encode())
+            logger.debug(
+                f"Node {self.local_info.name} connected to master at {self.master_ip} with info: {node_info}"
             )
-            # request_socket.send_string(f"{MasterReqType.NODE_OFFLINE.value}|{node_id}")
+
         except Exception as e:
-            logger.error(f"Error sending offline request to master: {e}")
-            traceback.print_exc()
-        super().stop_node()
-        self.node_socket.close()
-        logger.info(f"Node {self.local_info['name']} is stopped")
+            logger.error(f"Error updating master state: {e}")
 
-    def update_subscription(self, msg: bytes) -> bytes:
-        publisher_info: ComponentInfo = utils.loads(msg.decode())
-        self.subscribe_topic(publisher_info["name"], publisher_info)
-        return ResponseType.SUCCESS.value.encode()
+    async def send_request(
+        self, request_type: str, ip: IPAddress, port: Port, message: str
+    ) -> str:
+        """Sends a request to another node."""
+        addr = f"tcp://{ip}:{port}"
+        result = await send_bytes_request(
+            addr, [request_type.encode(), message.encode()]
+        )
+        return result.decode()
 
-    def subscribe_topic(
-        self, topic_name: TopicName, publisher_info: ComponentInfo
+    async def service_loop(
+        self,
+        service_socket: zmq.asyncio.Socket,
+        services: Dict[str, Callable[[bytes], bytes]],
     ) -> None:
-        if topic_name not in self.sub_sockets.keys():
-            logger.warning(f"Wrong subscription request for {topic_name}")
-            return
-        for _socket, handle_func in self.sub_sockets[topic_name]:
-            _socket.connect(
-                f"tcp://{publisher_info['ip']}:{publisher_info['port']}"
+        """Handles service requests in an async loop."""
+        while self.running:
+            try:
+                name_bytes, request = await service_socket.recv_multipart()
+                service_name = name_bytes.decode()
+                if service_name not in services:
+                    logger.error(f"Service {service_name} is not available")
+                    await service_socket.send(ResponseType.ERROR.value)
+                    continue
+
+                result = await asyncio.to_thread(
+                    services[service_name], request
+                )
+                await service_socket.send(result)
+
+            except asyncio.TimeoutError:
+                logger.error("Timeout: Service took too long")
+                await service_socket.send(ResponseType.TIMEOUT.value)
+            except Exception as e:
+                logger.error(f"Error in service {service_name}: {e}")
+                traceback.print_exc()
+                await service_socket.send(ResponseType.ERROR.value)
+
+        logger.info("Service loop has been stopped")
+
+    async def send_request(
+        self, request_type: str, ip: IPAddress, port: Port, message: str
+    ) -> str:
+        addr = f"tcp://{ip}:{port}"
+        result = await send_bytes_request(
+            addr, [request_type.encode(), message.encode()]
+        )
+        return result.decode()
+
+    async def service_loop(
+        self,
+        service_socket: zmq.asyncio.Socket,
+        services: Dict[str, Callable[[bytes], bytes]],
+    ) -> None:
+        while self.running:
+            try:
+                name_bytes, request = await service_socket.recv_multipart()
+                # print(f"Received message: {result}")
+                service_name = name_bytes.decode()
+            except Exception as e:
+                logger.error(f"Error occurred when receiving request: {e}")
+                traceback.print_exc()
+            # the zmq service socket is blocked and only run one at a time
+            print(
+                f"Service {service_name} received message: {request.decode()}"
             )
-            self.submit_loop_task(handle_func, False)
-        logger.info(
-            f"Subscribers from Node {self.local_info['name']} "
-            f"have been subscribed to topic {topic_name}"
-        )
-
-    def send_node_request(self, request_type: str, message: str) -> str:
-        if self.master_ip is None:
-            raise Exception("Master node is not launched")
-        future = self.submit_loop_task(
-            send_node_request_to_master_async,
-            False,
-            self.master_ip,
-            request_type,
-            message,
-        )
-        result = future.result()
-        return result
-
-    def check_topic(self, topic_name: str) -> Optional[List[ComponentInfo]]:
-        result = self.send_node_request(
-            MasterReqType.GET_TOPIC_INFO.value,
-            topic_name,
-        )
-        if result == ResponseType.EMPTY.value:
-            return None
-        return loads(result)
-
-    def check_service(self, service_name: str) -> Optional[ComponentInfo]:
-        result = self.send_node_request(
-            MasterReqType.GET_SERVICE_INFO.value,
-            service_name,
-        )
-        if result == ResponseType.EMPTY.value:
-            return None
-        return loads(result)
-
-    # def register_publisher(self, publisher_info: ComponentInfo) -> None:
-    #     topic_name = publisher_info["name"]
-    #     self.send_node_request(
-    #         MasterReqType.REGISTER_PUBLISHER.value,
-    #         dumps(publisher_info),
-    #     )
-    #     if topic_name not in self.local_publisher.keys():
-    #         self.local_publisher[topic_name] = []
-    #     self.local_publisher[topic_name].append(publisher_info)
-
-    # def register_subscriber(
-    #     self,
-    #     subscriber_info: ComponentInfo,
-    #     zmq_socket: AsyncSocket,
-    #     handle_func: Callable[[], Awaitable],
-    # ) -> None:
-    #     topic_name = subscriber_info["name"]
-    #     msg = self.send_node_request(
-    #         MasterReqType.REGISTER_SUBSCRIBER.value,
-    #         dumps(subscriber_info),
-    #     )
-    #     if topic_name not in self.local_subscriber.keys():
-    #         self.local_subscriber[topic_name] = []
-    #     self.local_subscriber[topic_name].append(subscriber_info)
-    #     if topic_name not in self.sub_sockets:
-    #         self.sub_sockets[topic_name] = []
-    #     self.sub_sockets[topic_name].append((zmq_socket, handle_func))
-    #     publisher_info: Dict[TopicName, List[ComponentInfo]] = loads(msg)
-    #     for topic_name, publisher_list in publisher_info.items():
-    #         if topic_name not in self.sub_sockets.keys():
-    #             continue
-    #         for topic_info in publisher_list:
-    #             self.subscribe_topic(topic_name, topic_info)
-
-
-def start_master_node(node_ip: str) -> LanComMaster:
-    master_ip = search_for_master_node()
-    if master_ip is not None:
-        raise Exception("Master node already exists")
-    master_node = LanComMaster(node_ip)
-    return master_node
-
-
-def master_node_task(node_ip: str) -> None:
-    master_node = start_master_node(node_ip)
-    master_node.spin()
-
-
-def init_node(node_name: str, node_ip: str) -> LanComNode:
-    # if node_name == "Master":
-    #     return MasterNode(node_name, node_ip)
-    master_ip = search_for_master_node()
-    if master_ip is None:
-        logger.warning("Master node not found, starting a new master node...")
-        mp.Process(target=master_node_task, args=(node_ip,)).start()
-    return LanComNode(node_name, node_ip)
+            if service_name not in services.keys():
+                logger.error(f"Service {service_name} is not available")
+            try:
+                result = await asyncio.wait_for(
+                    self.loop.run_in_executor(
+                        self.executor, services[service_name], request
+                    ),
+                    timeout=2.0,
+                )
+                # result = services[service_name](request)
+                # logger.debug(service_name, result.decode())
+                await service_socket.send(result)
+            except asyncio.TimeoutError:
+                logger.error("Timeout: callback function took too long")
+                await service_socket.send(ResponseType.TIMEOUT.value)
+            except Exception as e:
+                logger.error(
+                    f"One error occurred when processing the Service "
+                    f'"{service_name}": {e}'
+                )
+                traceback.print_exc()
+                await service_socket.send(ResponseType.ERROR.value)
+        logger.info("Service loop has been stopped")
