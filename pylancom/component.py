@@ -75,7 +75,7 @@ class Publisher(AbstractComponent):
         )
         self.set_up_socket(self.node.pub_socket)
         self.node.register_publisher(self.info)
-        # self.node.local_info["topicList"].append(self.info)
+        self.node.local_info["publishers"].append(self.info)
         self.socket = self.node.pub_socket
 
     def publish_bytes(self, bytes_msg: bytes) -> None:
@@ -189,8 +189,9 @@ class Subscriber(AbstractComponent):
             raise ValueError("Request type is not supported")
         self.connected = False
         self.callback = callback
-        # self.node.local_info["subscriberList"].append(self.info)
-        self.node.register_subscriber(self.info, self.socket, self.listen)
+        self.node.local_info["subscribers"].append(self.info)
+        self.node.sub_sockets[topic_name].append((self.socket, self.listen))
+        # self.node.register_subscriber(self.info, self.socket, self.listen)
         self.running = True
 
     async def listen(self) -> None:
@@ -225,9 +226,13 @@ class Service(AbstractComponent):
     ) -> None:
         super().__init__(service_name, ComponentTypeEnum.SERVICE.value, False)
         self.set_up_socket(self.node.service_socket)
-        if service_name in self.node.local_service:
-            raise RuntimeError("Service has been registered in the local node")
-        # TODO: check if the service is already registered
+        for service_info in self.node.local_info["services"]:
+            if service_info["name"] != self.name:
+                continue
+            raise RuntimeError("Service has been registered locally")
+        self.node.local_info["services"].append(self.info)
+        self.node.service_cbs[self.name] = self.callback
+        self.handle_request = callback
         # if self.node.check_service(service_name) is not None:
         #     logger.warning(f"Service {service_name} is already registered")
         #     return
@@ -249,9 +254,6 @@ class Service(AbstractComponent):
             self.encoder = utils.dict2bytes
         else:
             raise ValueError("Response type is not supported")
-        self.node.local_service[self.info["name"]] = self.info
-        self.node.service_cbs[self.name] = self.callback
-        self.handle_request = callback
         logger.info(f'"{self.name}" Service is started')
 
     def callback(self, msg: bytes) -> bytes:
@@ -269,7 +271,7 @@ class Service(AbstractComponent):
         # await self.socket.send(self.encoder(result))
 
     def on_shutdown(self):
-        self.node.local_info["serviceList"].remove(self.info)
+        self.node.local_info["services"].remove(self.info)
         logger.info(f'"{self.name}" Service is stopped')
 
 

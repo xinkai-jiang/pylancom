@@ -87,14 +87,26 @@ class NodesInfoManager:
             return self.nodes_info[node_name]
         return None
 
-    def get_publishers(self) -> Dict[TopicName, List[ComponentInfo]]:
-        return self.publishers_info
+    def get_publishers(
+        self, topic_name: TopicName
+    ) -> Optional[List[ComponentInfo]]:
+        if topic_name in self.publishers_info:
+            return self.publishers_info[topic_name]
+        return None
 
-    def get_services(self) -> Dict[ServiceName, ComponentInfo]:
-        return self.services_info
+    def get_subscribers(
+        self, topic_name: TopicName
+    ) -> Optional[List[ComponentInfo]]:
+        if topic_name in self.subscribers_info:
+            return self.subscribers_info[topic_name]
+        return None
 
-    def get_subscribers(self) -> Optional[List[ComponentInfo]]:
-        return self.subscribers_info
+    def get_services(
+        self, services_name: ServiceName
+    ) -> Optional[ComponentInfo]:
+        if services_name in self.services_info:
+            return self.services_info[services_name]
+        return None
 
     def register_node(self, node_info: NodeInfo):
         if node_info["nodeID"] in self.nodes_info.keys():
@@ -102,20 +114,20 @@ class NodesInfoManager:
         self.nodes_info[node_info["nodeID"]] = node_info
         logger.debug(f"Node {node_info['name']} is registered")
 
-    def register_publisher(self, topic_info: ComponentInfo) -> None:
+    def add_publisher(self, topic_info: ComponentInfo) -> None:
         topic_name = topic_info["name"]
         if topic_name not in self.publishers_info.keys():
             self.publishers_info[topic_name] = []
             logger.info(f"Topic {topic_info['name']} has been registered")
         self.publishers_info[topic_name].append(topic_info)
 
-    def register_subscriber(self, subscriber_info: ComponentInfo):
+    def add_subscriber(self, subscriber_info: ComponentInfo):
         topic_name = subscriber_info["name"]
         if topic_name not in self.subscribers_info.keys():
             self.subscribers_info[topic_name] = []
         self.subscribers_info[topic_name].append(subscriber_info)
 
-    def register_service(self, service_info: ComponentInfo):
+    def add_service(self, service_info: ComponentInfo):
         if service_info["name"] not in self.services_info.keys():
             self.services_info[service_info["name"]] = service_info
             logger.info(f"Service {service_info['name']} has been registered")
@@ -144,8 +156,8 @@ class LanComMaster(AbstractNode):
                 socket.inet_aton(self.master_ip),
             )
             current_time = time.strftime("%y-%m-%d-%H-%M-%S")
+            msg = f"LancomMaster|{__VERSION__}|{self.id}|{self.master_ip}|{current_time}"
             while self.running:
-                msg = f"LancomMaster|{__VERSION__}|{self.id}|{self.master_ip}|{current_time}"
                 _socket.sendto(msg.encode(), (MULTICAST_ADDR, DISCOVERY_PORT))
                 await async_sleep(1)
         logger.info("Multicasting has been stopped")
@@ -185,12 +197,13 @@ class LanComMaster(AbstractNode):
     def register_node(self, msg: bytes) -> bytes:
         node_info: NodeInfo = loads(bytes2str(msg))
         # logger.debug(f"Registering node: {node_info}")
-        # for topic_info in node_info["topicList"]:
+        # for publisher_info in node_info["publishers"]:
+        #     self.nodes_info_manager.add_publisher(publisher_info)
+        #     topic_name = publisher_info["name"]
         #     subscribers_info = self.nodes_info_manager.get_subscribers()
-        #     self.nodes_info_manager.register_publisher(topic_info)
-        #     if topic_info["name"] not in subscribers_info:
+        #     if topic_name not in subscribers_info:
         #         continue
-        #     for subscriber_info in subscribers_info[topic_info["name"]]:
+        #     for subscriber_info in subscribers_info[publisher_info["name"]]:
         #         target_node_info = self.nodes_info_manager.get_node_info(
         #             subscriber_info["nodeID"]
         #         )
@@ -206,20 +219,20 @@ class LanComMaster(AbstractNode):
         #             NodeReqType.UPDATE_SUBSCRIPTION.value,
         #             target_node_info["ip"],
         #             target_node_info["port"],
-        #             dumps(topic_info),
+        #             dumps(publisher_info),
         #         )
-        self.nodes_info_manager.register_node(node_info)
-        # for service_info in node_info["serviceList"]:
-        #     self.nodes_info_manager.register_service(service_info)
-        # for subscriber_info in node_info["subscriberList"]:
-        #     self.nodes_info_manager.register_subscriber(subscriber_info)
-        # logger.info(f"Node {node_info['name']} is registered")
+        # self.nodes_info_manager.register_node(node_info)
+        # for subscriber_info in node_info["subscribers"]:
+        #     self.nodes_info_manager.add_subscriber(subscriber_info)
+        # for service_info in node_info["services"]:
+        #     self.nodes_info_manager.add_service(service_info)
+        logger.info(f"Node {node_info['name']} is registered")
         return str2bytes(ResponseType.SUCCESS.value)
 
     def register_publisher(self, msg: bytes) -> bytes:
         topic_info: ComponentInfo = loads(bytes2str(msg))
         topic_name = topic_info["name"]
-        self.nodes_info_manager.register_publisher(topic_info)
+        self.nodes_info_manager.add_publisher(topic_info)
         logger.debug(f"Publisher {topic_info['name']} is registered")
         subs_info = self.nodes_info_manager.check_subscriber(topic_name)
         print(self.nodes_info_manager.nodes_info)
@@ -244,13 +257,13 @@ class LanComMaster(AbstractNode):
 
     def register_subscriber(self, msg: bytes) -> bytes:
         subscriber_info: ComponentInfo = loads(bytes2str(msg))
-        self.nodes_info_manager.register_subscriber(subscriber_info)
+        self.nodes_info_manager.add_subscriber(subscriber_info)
         logger.debug(f"Subscriber {subscriber_info['name']} is registered")
         return self.check_topic(str2bytes(subscriber_info["name"]))
 
     def register_service(self, msg: bytes) -> bytes:
         service_info: ComponentInfo = loads(bytes2str(msg))
-        self.nodes_info_manager.register_service(service_info)
+        self.nodes_info_manager.add_service(service_info)
         logger.debug(f"Service {service_info['name']} is registered")
         return str2bytes(ResponseType.SUCCESS.value)
 

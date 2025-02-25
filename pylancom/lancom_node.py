@@ -6,8 +6,8 @@ import struct
 import time
 import traceback
 from asyncio import sleep as async_sleep
-from json import dumps, loads
-from typing import Awaitable, Callable, Dict, List, Optional, Tuple
+from json import loads
+from typing import Callable, Dict, List, Optional, Tuple
 
 import zmq
 import zmq.asyncio
@@ -32,9 +32,7 @@ from .utils import search_for_master_node, send_node_request_to_master_async
 class LanComNode(AbstractNode):
     instance: Optional[LanComNode] = None
 
-    def __init__(
-        self, node_name: str, node_ip: str, node_type: str = "LanComNode"
-    ) -> None:
+    def __init__(self, node_name: str, node_ip: str) -> None:
         master_ip = search_for_master_node()
         if master_ip is None:
             raise Exception("Master node not found")
@@ -43,24 +41,7 @@ class LanComNode(AbstractNode):
         LanComNode.instance = self
         self.master_ip = master_ip
         self.master_id = None
-        self.pub_socket = self.create_socket(zmq.PUB)
-        self.pub_socket.bind(f"tcp://{node_ip}:0")
-        self.service_socket = self.create_socket(zmq.REP)
-        self.service_socket.bind(f"tcp://{node_ip}:0")
-        self.sub_sockets: Dict[str, List[Tuple[AsyncSocket, Callable]]] = {}
-        self.local_info: NodeInfo = {
-            "name": node_name,
-            "nodeID": utils.create_hash_identifier(),
-            "ip": node_ip,
-            # "port": utils.get_zmq_socket_port(self.node_socket),
-            "port": 0,
-            "type": node_type,
-        }
-        self.local_publisher: Dict[str, List[ComponentInfo]] = {}
-        self.local_subscriber: Dict[str, List[ComponentInfo]] = {}
-        self.local_service: Dict[str, ComponentInfo] = {}
-        self.service_cbs: Dict[str, Callable[[bytes], bytes]] = {}
-        self.connected = False
+        self.node_name = node_name
         super().__init__(node_ip)
 
     def start_spin_task(self) -> None:
@@ -114,6 +95,24 @@ class LanComNode(AbstractNode):
         )
 
     def initialize_event_loop(self):
+        self.pub_socket = self.create_socket(zmq.PUB)
+        self.pub_socket.bind(f"tcp://{self.node_ip}:0")
+        self.service_socket = self.create_socket(zmq.REP)
+        self.service_socket.bind(f"tcp://{self.node_ip}:0")
+        self.sub_sockets: Dict[str, List[Tuple[AsyncSocket, Callable]]] = {}
+        self.local_info: NodeInfo = {
+            "name": self.node_name,
+            "nodeID": utils.create_hash_identifier(),
+            "ip": self.node_ip,
+            # "port": utils.get_zmq_socket_port(self.node_socket),
+            "port": 0,
+            "type": "LanComNode",
+            "publishers": [],
+            "subscribers": [],
+            "services": [],
+        }
+        self.service_cbs: Dict[str, Callable[[bytes], bytes]] = {}
+        self.connected = False
         self.submit_loop_task(self.service_loop, False, self.service_cbs)
         node_service_cb: Dict[str, Callable[[bytes], bytes]] = {
             NodeReqType.UPDATE_SUBSCRIPTION.value: self.update_subscription,
@@ -198,39 +197,39 @@ class LanComNode(AbstractNode):
             return None
         return loads(result)
 
-    def register_publisher(self, publisher_info: ComponentInfo) -> None:
-        topic_name = publisher_info["name"]
-        self.send_node_request(
-            MasterReqType.REGISTER_PUBLISHER.value,
-            dumps(publisher_info),
-        )
-        if topic_name not in self.local_publisher.keys():
-            self.local_publisher[topic_name] = []
-        self.local_publisher[topic_name].append(publisher_info)
+    # def register_publisher(self, publisher_info: ComponentInfo) -> None:
+    #     topic_name = publisher_info["name"]
+    #     self.send_node_request(
+    #         MasterReqType.REGISTER_PUBLISHER.value,
+    #         dumps(publisher_info),
+    #     )
+    #     if topic_name not in self.local_publisher.keys():
+    #         self.local_publisher[topic_name] = []
+    #     self.local_publisher[topic_name].append(publisher_info)
 
-    def register_subscriber(
-        self,
-        subscriber_info: ComponentInfo,
-        zmq_socket: AsyncSocket,
-        handle_func: Callable[[], Awaitable],
-    ) -> None:
-        topic_name = subscriber_info["name"]
-        msg = self.send_node_request(
-            MasterReqType.REGISTER_SUBSCRIBER.value,
-            dumps(subscriber_info),
-        )
-        if topic_name not in self.local_subscriber.keys():
-            self.local_subscriber[topic_name] = []
-        self.local_subscriber[topic_name].append(subscriber_info)
-        if topic_name not in self.sub_sockets:
-            self.sub_sockets[topic_name] = []
-        self.sub_sockets[topic_name].append((zmq_socket, handle_func))
-        publisher_info: Dict[TopicName, List[ComponentInfo]] = loads(msg)
-        for topic_name, publisher_list in publisher_info.items():
-            if topic_name not in self.sub_sockets.keys():
-                continue
-            for topic_info in publisher_list:
-                self.subscribe_topic(topic_name, topic_info)
+    # def register_subscriber(
+    #     self,
+    #     subscriber_info: ComponentInfo,
+    #     zmq_socket: AsyncSocket,
+    #     handle_func: Callable[[], Awaitable],
+    # ) -> None:
+    #     topic_name = subscriber_info["name"]
+    #     msg = self.send_node_request(
+    #         MasterReqType.REGISTER_SUBSCRIBER.value,
+    #         dumps(subscriber_info),
+    #     )
+    #     if topic_name not in self.local_subscriber.keys():
+    #         self.local_subscriber[topic_name] = []
+    #     self.local_subscriber[topic_name].append(subscriber_info)
+    #     if topic_name not in self.sub_sockets:
+    #         self.sub_sockets[topic_name] = []
+    #     self.sub_sockets[topic_name].append((zmq_socket, handle_func))
+    #     publisher_info: Dict[TopicName, List[ComponentInfo]] = loads(msg)
+    #     for topic_name, publisher_list in publisher_info.items():
+    #         if topic_name not in self.sub_sockets.keys():
+    #             continue
+    #         for topic_info in publisher_list:
+    #             self.subscribe_topic(topic_name, topic_info)
 
 
 def start_master_node(node_ip: str) -> LanComMaster:

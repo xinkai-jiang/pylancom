@@ -58,6 +58,9 @@ class NodeInfo(TypedDict):
     ip: IPAddress
     type: str
     port: int
+    publishers: List[ComponentInfo]
+    subscribers: List[ComponentInfo]
+    services: List[ComponentInfo]
     # topicPort: int
     # topicList: List[ComponentInfo]
     # servicePort: int
