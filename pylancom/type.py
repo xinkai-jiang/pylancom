@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Dict, List, TypedDict
+from typing import List, TypedDict
 
 import zmq
 import zmq.asyncio
@@ -27,10 +27,19 @@ class MasterReqType(Enum):
 
 class NodeReqType(Enum):
     PING = "PING"
-    UPDATE_SUBSCRIPTION = "UPDATE_SUBSCRIPTION"
+    NODE_INFO = "NODE_INFO"
+    # UPDATE_SUBSCRIPTION = "UPDATE_SUBSCRIPTION"
 
 
-class ResponseType(Enum):
+class MsgType(Enum):
+    BYTES = b"0"
+    STR = b"1"
+    PROTOBUF = b"2"
+    JSON = b"3"
+    NSGPACK = b"4"
+
+
+class LanComMsg(Enum):
     SUCCESS = "SUCCESS"
     ERROR = "ERROR"
     TIMEOUT = "TIMEOUT"
@@ -38,12 +47,12 @@ class ResponseType(Enum):
 
 
 class ComponentTypeEnum(Enum):
-    PUBLISHER = "PUBLISHER"
-    SUBSCRIBER = "SUBSCRIBER"
-    SERVICE = "SERVICE"
+    PUBLISHER = "publisher"
+    SUBSCRIBER = "subscriber"
+    SERVICE = "service"
 
 
-class ComponentInfo(TypedDict):
+class SocketInfo(TypedDict):
     name: str
     componentID: HashIdentifier
     nodeID: HashIdentifier
@@ -59,18 +68,10 @@ class NodeInfo(TypedDict):
     ip: IPAddress
     type: str
     port: int
-    publishers: List[ComponentInfo]
-    subscribers: List[ComponentInfo]
-    services: List[ComponentInfo]
-    # topicPort: int
-    # topicList: List[ComponentInfo]
-    # servicePort: int
-    # serviceList: List[ComponentInfo]
-    # subscriberList: List[ComponentInfo]
+    publisher: List[SocketInfo]
+    service: List[SocketInfo]
 
 
-class ConnectionState(TypedDict):
-    masterID: HashIdentifier
-    timestamp: float
-    topic: Dict[TopicName, List[ComponentInfo]]
-    service: Dict[ServiceName, ComponentInfo]
+class UpdateConnection(TypedDict):
+    publishers: List[SocketInfo]
+    services: List[SocketInfo]

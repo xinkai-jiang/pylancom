@@ -1,4 +1,9 @@
 # from pylancom.abstract_node import AbstractNode
 from .config import __VERSION__ as __version__
+from .nodes.lancom_node import LanComNode
 
-# from .lancom_node import init_node, start_master_node
+
+def init_node(node_name: str, node_ip: str) -> LanComNode:
+    if LanComNode.instance is not None:
+        return LanComNode.instance
+    return LanComNode(node_name, node_ip)

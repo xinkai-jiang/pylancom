@@ -7,7 +7,7 @@ from utils import random_name
 
 import pylancom
 from pylancom import start_master_node
-from pylancom.component import Publisher, Subscriber
+from pylancom.nodes.component import Publisher, Subscriber
 
 
 def test_master_node_broadcast(ip: str = "127.0.0.1"):

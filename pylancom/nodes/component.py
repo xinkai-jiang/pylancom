@@ -10,24 +10,24 @@ from typing import Callable, Dict, Optional, Type, Union, cast
 import zmq
 import zmq.asyncio
 
-from . import utils
-from .lancom_node import LanComNode
-from .log import logger
-from .type import (
+from ..log import logger
+from ..type import (
     AsyncSocket,
-    ComponentInfo,
     ComponentType,
     ComponentTypeEnum,
     HashIdentifier,
+    SocketInfo,
 )
-from .utils import (
+from ..utils.utils import (
     create_hash_identifier,
     get_zmq_socket_port,
     send_bytes_request,
 )
+from .lancom_node import LanComNode
+from .utils import utils
 
 
-class AbstractComponent(abc.ABC):
+class AbstractLanComSocket(abc.ABC):
     def __init__(
         self,
         name: str,
@@ -42,7 +42,7 @@ class AbstractComponent(abc.ABC):
             self.name = f"{local_name}/{name}"
         else:
             self.name = name
-        self.info: ComponentInfo = {
+        self.info: SocketInfo = {
             "name": self.name,
             "componentID": create_hash_identifier(),
             "nodeID": self.node.local_info["nodeID"],
@@ -66,7 +66,7 @@ class AbstractComponent(abc.ABC):
         raise NotImplementedError
 
 
-class Publisher(AbstractComponent):
+class Publisher(AbstractLanComSocket):
     def __init__(self, topic_name: str, with_local_namespace: bool = False):
         super().__init__(
             topic_name,
@@ -168,7 +168,7 @@ class ByteStreamer(Streamer):
 MessageT = Union[bytes, str, dict]
 
 
-class Subscriber(AbstractComponent):
+class Subscriber(AbstractLanComSocket):
     def __init__(
         self,
         topic_name: str,
@@ -178,7 +178,7 @@ class Subscriber(AbstractComponent):
         super().__init__(topic_name, ComponentTypeEnum.SUBSCRIBER.value, False)
         self.socket = self.node.create_socket(zmq.SUB)
         self.socket.setsockopt(zmq.SUBSCRIBE, self.name.encode())
-        self.subscribed_components: Dict[HashIdentifier, ComponentInfo] = {}
+        self.subscribed_components: Dict[HashIdentifier, SocketInfo] = {}
         if msg_type is bytes:
             self.decoder = cast(Callable[[bytes], bytes], lambda x: x)
         elif msg_type is str:
@@ -216,7 +216,7 @@ RequestT = Union[bytes, str, dict]
 ResponseT = Union[bytes, str, dict]
 
 
-class Service(AbstractComponent):
+class Service(AbstractLanComSocket):
     def __init__(
         self,
         service_name: str,
@@ -278,7 +278,7 @@ class Service(AbstractComponent):
 class ServiceProxy:
     @staticmethod
     def send_service_request(
-        service_component: ComponentInfo,
+        service_component: SocketInfo,
         request_type: Type[RequestT],
         response_type: Type[ResponseT],
         request: RequestT,

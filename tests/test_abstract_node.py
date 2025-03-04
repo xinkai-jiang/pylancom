@@ -4,7 +4,7 @@ import struct
 
 import pytest
 
-from pylancom.abstract_node import AbstractNode
+from pylancom.nodes.abstract_node import AbstractNode
 from pylancom.protos.node_info_pb2 import NodeInfo
 
 
