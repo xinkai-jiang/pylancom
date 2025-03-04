@@ -68,8 +68,8 @@ class NodeInfo(TypedDict):
     ip: IPAddress
     type: str
     port: int
-    publisher: List[SocketInfo]
-    service: List[SocketInfo]
+    publishers: List[SocketInfo]
+    services: List[SocketInfo]
 
 
 class UpdateConnection(TypedDict):

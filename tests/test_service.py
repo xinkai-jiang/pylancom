@@ -6,7 +6,7 @@ from utils import random_name
 
 import pylancom
 from pylancom import start_master_node
-from pylancom.nodes.component import Service, ServiceProxy
+from pylancom.nodes.lancom_socket import Service, ServiceProxy
 
 
 def test_master_node_broadcast():

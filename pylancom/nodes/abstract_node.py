@@ -35,6 +35,8 @@ class NodesMap:
         self.nodes_info: Dict[str, NodeInfo] = {}
         self.nodes_info_id: Dict[str, str] = {}
         self.nodes_heartbeat: Dict[str, str] = {}
+        self.publishers_dict: Dict[str, SocketInfo] = {}
+        self.services_dict: Dict[str, SocketInfo] = {}
 
     def check_node(self, node_id: str) -> bool:
         return node_id in self.nodes_info
@@ -51,8 +53,8 @@ class NodesMap:
         self.nodes_info[node_id] = node_info
         self.nodes_info_id[node_id] = node_info["infoID"]
         return {
-            "publishers": node_info["publisher"],
-            "services": node_info["service"],
+            "publishers": node_info["publishers"],
+            "services": node_info["services"],
         }
 
     def update_node(
@@ -62,11 +64,11 @@ class NodesMap:
             "publishers": [],
             "services": [],
         }
-        for publisher in node_info["publisher"]:
-            if publisher not in self.nodes_info[node_id]["publisher"]:
+        for publisher in node_info["publishers"]:
+            if publisher not in self.nodes_info[node_id]["publishers"]:
                 updated_info["publishers"].append(publisher)
-        for service in node_info["service"]:
-            if service not in self.nodes_info[node_id]["service"]:
+        for service in node_info["services"]:
+            if service not in self.nodes_info[node_id]["services"]:
                 updated_info["services"].append(service)
         self.nodes_info[node_id] = node_info
         self.nodes_info_id[node_id] = node_info["infoID"]

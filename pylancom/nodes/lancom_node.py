@@ -3,14 +3,21 @@ from __future__ import annotations
 import asyncio
 import socket
 import traceback
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional
 
 import msgpack
 import zmq.asyncio
 
 from ..config import MULTICAST_ADDR, MULTICAST_PORT
 from ..log import logger
-from ..type import IPAddress, LanComMsg, NodeInfo, NodeReqType
+from ..type import (
+    AsyncSocket,
+    IPAddress,
+    LanComMsg,
+    NodeInfo,
+    NodeReqType,
+    SocketInfo,
+)
 from ..utils.utils import (
     create_hash_identifier,
     create_heartbeat_message,
@@ -25,18 +32,20 @@ class LanComNode(AbstractNode):
     def __init__(self, node_name: str, node_ip: IPAddress) -> None:
         if LanComNode.instance is not None:
             raise Exception("LanComNode has been initialized")
+        LanComNode.instance = self
         self.node_id = create_hash_identifier()
         # Initialize the NodeInfo message
         self.local_info = NodeInfo()
         self.local_info["name"] = node_name
         self.local_info["nodeID"] = self.node_id
-        self.local_info["nodeID"] = node_ip
+        self.local_info["ip"] = node_ip
         self.local_info["type"] = "LanComNode"
         self.local_info["infoID"] = 0
         self.local_info["port"] = 0
-        self.local_info["publisher"] = []
-        self.local_info["service"] = []
+        self.local_info["publishers"] = []
+        self.local_info["services"] = []
         self.service_cbs: Dict[str, Callable[[bytes], bytes]] = {}
+        self.sub_sockets: Dict[str, List[AsyncSocket]] = {}
         super().__init__(node_name, node_ip)
 
     def create_socket(self, socket_type: int) -> zmq.asyncio.Socket:
@@ -114,6 +123,8 @@ class LanComNode(AbstractNode):
         node_socket = self.create_socket(zmq.REP)
         node_socket.bind(f"tcp://{self.node_ip}:0")
         self.local_info["port"] = get_zmq_socket_port(node_socket)
+        self.pub_socket = self.create_socket(zmq.PUB)
+        self.pub_socket.bind(f"tcp://{self.node_ip}:0")
         self.nodes_map.register_node(self.node_id, self.local_info)
         node_service_cbs = {
             NodeReqType.PING.value: lambda x: LanComMsg.SUCCESS.value,
@@ -133,3 +144,12 @@ class LanComNode(AbstractNode):
 
     def check_connection(self, updated_info):
         pass
+
+    def register_sub_socket(
+        self, socket_info: SocketInfo, socket: AsyncSocket
+    ) -> None:
+        if socket_info["type"] != "subscriber":
+            raise Exception("Invalid socket type")
+        if socket_info["name"] not in self.sub_sockets.keys():
+            self.sub_sockets[socket_info["name"]] = []
+        self.sub_sockets[socket_info["name"]].append(socket)

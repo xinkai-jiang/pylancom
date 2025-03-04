@@ -6,13 +6,7 @@ from typing import Callable, Dict, List
 from utils import random_name
 
 import pylancom
-from pylancom import start_master_node
-from pylancom.nodes.component import Publisher, Subscriber
-
-
-def test_master_node_broadcast(ip: str = "127.0.0.1"):
-    master_node = start_master_node(ip)
-    master_node.spin()
+from pylancom.nodes.lancom_socket import Publisher, Subscriber
 
 
 def create_service_callback(service_name: str) -> Callable[[str], str]:
@@ -40,7 +34,6 @@ def create_subscriber_callback(
 def start_node(publisher_list: List[str], subscriber_list: List[str]):
     node_name = random_name("Node")
     node = pylancom.init_node(node_name, "127.0.0.1")
-    node.spin(block=False)
     publisher_dict: Dict[str, Publisher] = {}
     subscriber_dict: Dict[str, Subscriber] = {}
     for name in publisher_list:
@@ -69,9 +62,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--ip", type=str, default="127.0.0.1")
     args = parser.parse_args()
-    p0 = mp.Process(target=test_master_node_broadcast, args=(args.ip,))
-    p0.start()
-    time.sleep(1)
     p1 = mp.Process(target=start_node, args=(["A", "B"], ["C", "D"]))
     p2 = mp.Process(target=start_node, args=(["C", "D"], ["A", "B"]))
     p1.start()

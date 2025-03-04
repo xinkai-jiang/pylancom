@@ -18,13 +18,13 @@ from ..type import (
     HashIdentifier,
     SocketInfo,
 )
+from ..utils import msg_utils
 from ..utils.utils import (
     create_hash_identifier,
     get_zmq_socket_port,
     send_bytes_request,
 )
 from .lancom_node import LanComNode
-from .utils import utils
 
 
 class AbstractLanComSocket(abc.ABC):
@@ -74,13 +74,13 @@ class Publisher(AbstractLanComSocket):
             with_local_namespace,
         )
         self.set_up_socket(self.node.pub_socket)
-        self.node.register_publisher(self.info)
+        print(self.node.local_info)
         self.node.local_info["publishers"].append(self.info)
         self.socket = self.node.pub_socket
 
     def publish_bytes(self, bytes_msg: bytes) -> None:
         # in case the publish too much messages
-        self.node.submit_loop_task(self.send_bytes_async, True, bytes_msg)
+        self.node.submit_loop_task(self.send_bytes_async(bytes_msg), True)
 
     def publish_string(self, msg: str) -> None:
         self.publish_bytes(msg.encode())
@@ -182,16 +182,15 @@ class Subscriber(AbstractLanComSocket):
         if msg_type is bytes:
             self.decoder = cast(Callable[[bytes], bytes], lambda x: x)
         elif msg_type is str:
-            self.decoder = utils.bytes2str
+            self.decoder = msg_utils.bytes2str
         elif msg_type is dict:
-            self.decoder = utils.bytes2dict
+            self.decoder = msg_utils.bytes2dict
         else:
             raise ValueError("Request type is not supported")
         self.connected = False
         self.callback = callback
-        self.node.local_info["subscribers"].append(self.info)
-        self.node.sub_sockets[topic_name].append((self.socket, self.listen))
-        # self.node.register_subscriber(self.info, self.socket, self.listen)
+        # self.node.sub_sockets[topic_name].append((self.socket, self.listen))
+        self.node.register_sub_socket(self.info, self.socket)
         self.running = True
 
     async def listen(self) -> None:
@@ -240,18 +239,18 @@ class Service(AbstractLanComSocket):
         if request_type is bytes:
             self.decoder = cast(Callable[[bytes], bytes], lambda x: x)
         elif request_type is str:
-            self.decoder = utils.bytes2str
+            self.decoder = msg_utils.bytes2str
         elif request_type is dict:
-            self.decoder = utils.bytes2dict
+            self.decoder = msg_utils.bytes2dict
         else:
             raise ValueError("Request type is not supported")
         # self.encoder: Callable[[ResponseT], bytes]
         if response_type is bytes:
             self.encoder = cast(Callable[[bytes], bytes], lambda x: x)
         elif response_type is str:
-            self.encoder = utils.str2bytes
+            self.encoder = msg_utils.str2bytes
         elif response_type is dict:
-            self.encoder = utils.dict2bytes
+            self.encoder = msg_utils.dict2bytes
         else:
             raise ValueError("Response type is not supported")
         logger.info(f'"{self.name}" Service is started')
@@ -287,9 +286,9 @@ class ServiceProxy:
         if request_type is bytes:
             request = cast(bytes, request)
         elif request_type is str:
-            request = utils.str2bytes(cast(str, request))
+            request = msg_utils.str2bytes(cast(str, request))
         elif request_type is dict:
-            request = utils.dict2bytes(cast(dict, request))
+            request = msg_utils.dict2bytes(cast(dict, request))
         else:
             raise ValueError("Unsupported request type")
         if LanComNode.instance is None:
