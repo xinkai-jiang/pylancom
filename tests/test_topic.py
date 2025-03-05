@@ -45,10 +45,10 @@ def start_node(publisher_list: List[str], subscriber_list: List[str]):
     try:
         i = 0
         while True:
-            time.sleep(1)
             for name, publisher in publisher_dict.items():
-                # print(f"Publishing message from {name}")
+                # lancom_logger.debug(f"Publishing message from {name}")
                 publisher.publish_string(f"{name} message")
+                time.sleep(1)
             i += 1
     except KeyboardInterrupt:
         node.stop_node()
@@ -65,8 +65,7 @@ if __name__ == "__main__":
     p1 = mp.Process(target=start_node, args=(["A", "B"], ["C", "D"]))
     p2 = mp.Process(target=start_node, args=(["C", "D"], ["A", "B"]))
     p1.start()
-    time.sleep(5)
-    print("Starting second node")
+    time.sleep(2)
     p2.start()
     p1.join()
     # p2.join()

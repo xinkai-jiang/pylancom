@@ -13,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 class TestNode(AbstractNode):
     def initialize_event_loop(self):
-        self.submit_loop_task(self.multicast_loop, False)
         self.submit_loop_task(self.listen_loop, False)
 
 

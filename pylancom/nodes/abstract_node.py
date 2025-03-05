@@ -25,7 +25,7 @@ from ..type import (
     NodeReqType,
     Port,
     SocketInfo,
-    UpdateConnection,
+    TopicName,
 )
 from ..utils.utils import send_bytes_request
 
@@ -47,38 +47,46 @@ class NodesMap:
     def check_heartbeat(self, node_id: str, info_id: int) -> bool:
         return self.check_node(node_id) and self.check_info(node_id, info_id)
 
-    def register_node(
-        self, node_id: str, node_info: NodeInfo
-    ) -> Dict[str, List[SocketInfo]]:
-        self.nodes_info[node_id] = node_info
-        self.nodes_info_id[node_id] = node_info["infoID"]
-        return {
-            "publishers": node_info["publishers"],
-            "services": node_info["services"],
-        }
+    # def register_node(
+    #     self, node_id: str, node_info: NodeInfo
+    # ) -> None:
+    #     self.nodes_info[node_id] = node_info
+    #     self.nodes_info_id[node_id] = node_info["infoID"]
+    #     node_name = node_info["name"]
+    #     logger.debug(f"Node {node_name} has been registered")
+    #     updated_info = {
+    #         "publishers": node_info["publishers"],
+    #         "services": node_info["services"],
+    #     }
 
-    def update_node(
-        self, node_id: str, node_info: NodeInfo
-    ) -> Dict[str, List[SocketInfo]]:
-        updated_info: UpdateConnection = {
-            "publishers": [],
-            "services": [],
-        }
-        for publisher in node_info["publishers"]:
-            if publisher not in self.nodes_info[node_id]["publishers"]:
-                updated_info["publishers"].append(publisher)
-        for service in node_info["services"]:
-            if service not in self.nodes_info[node_id]["services"]:
-                updated_info["services"].append(service)
+    def update_node(self, node_id: str, node_info: NodeInfo):
+        if node_id not in self.nodes_info:
+            logger.debug(f"Node {node_info['name']} has been registered")
+        for pub_info in node_info["publishers"]:
+            if pub_info["socketID"] not in self.publishers_dict:
+                self.publishers_dict[pub_info["socketID"]] = pub_info
+        for service_info in node_info["services"]:
+            if service_info["socketID"] not in self.services_dict:
+                self.services_dict[service_info["socketID"]] = service_info
         self.nodes_info[node_id] = node_info
         self.nodes_info_id[node_id] = node_info["infoID"]
-        node_name = node_info["name"]
-        logger.debug(f"Node {node_name} has been updated")
-        return updated_info
 
     def remove_node(self, node_id: str) -> None:
         self.nodes_info.pop(node_id, None)
         self.nodes_info_id.pop(node_id, None)
+
+    def get_publisher_info(self, topic_name: TopicName) -> List[SocketInfo]:
+        publishers: List[SocketInfo] = []
+        for pub_info in self.publishers_dict.values():
+            if pub_info["name"] == topic_name:
+                publishers.append(pub_info)
+        return publishers
+
+    def get_service_info(self, service_name: str) -> SocketInfo:
+        for service in self.services_dict.values():
+            if service["name"] == service_name:
+                return service
+        return None
 
 
 class AbstractNode(abc.ABC):
@@ -195,8 +203,8 @@ class AbstractNode(abc.ABC):
                 LanComMsg.EMPTY.value,
             )
             node_info: NodeInfo = msgpack.loads(node_info_bytes)
-            updated_info = self.nodes_map.update_node(node_id, node_info)
-            self.check_connection(updated_info)
+            self.nodes_map.update_node(node_id, node_info)
+            # self.check_connection(updated_info)
             return
         except Exception as e:
             logger.error(f"Error processing received message: {e}")
@@ -217,12 +225,6 @@ class AbstractNode(abc.ABC):
             msg.encode(),
         )
         return result
-
-    @abc.abstractmethod
-    def check_connection(
-        self, updated_info: Dict[str, List[SocketInfo]]
-    ) -> bool:
-        raise NotImplementedError
 
     @abc.abstractmethod
     def initialize_event_loop(self):

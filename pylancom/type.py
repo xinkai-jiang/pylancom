@@ -54,7 +54,7 @@ class ComponentTypeEnum(Enum):
 
 class SocketInfo(TypedDict):
     name: str
-    componentID: HashIdentifier
+    socketID: HashIdentifier
     nodeID: HashIdentifier
     type: ComponentType
     ip: IPAddress

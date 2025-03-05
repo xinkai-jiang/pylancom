@@ -44,7 +44,7 @@ class AbstractLanComSocket(abc.ABC):
             self.name = name
         self.info: SocketInfo = {
             "name": self.name,
-            "componentID": create_hash_identifier(),
+            "socketID": create_hash_identifier(),
             "nodeID": self.node.local_info["nodeID"],
             "type": component_type,
             "ip": self.node.local_info["ip"],
@@ -74,8 +74,8 @@ class Publisher(AbstractLanComSocket):
             with_local_namespace,
         )
         self.set_up_socket(self.node.pub_socket)
-        print(self.node.local_info)
         self.node.local_info["publishers"].append(self.info)
+        self.node.local_info["infoID"] += 1
         self.socket = self.node.pub_socket
 
     def publish_bytes(self, bytes_msg: bytes) -> None:
@@ -189,13 +189,25 @@ class Subscriber(AbstractLanComSocket):
             raise ValueError("Request type is not supported")
         self.connected = False
         self.callback = callback
-        # self.node.sub_sockets[topic_name].append((self.socket, self.listen))
-        self.node.register_sub_socket(self.info, self.socket)
+        # # register in the node sub socket dict
+        # if self.info["name"] not in self.node.sub_sockets.keys():
+        #     self.node.sub_sockets[self.info["name"]] = []
+        # self.node.sub_sockets[self.info["name"]].append(self.socket)
+        # publishers = self.node.nodes_map.get_publisher_info(self.name)
+        # for pub_info in publishers:
+        #     # self.subscribed_components[pub_info["socketID"]] = pub_info
+        #     self.socket.connect(f"tcp://{pub_info['ip']}:{pub_info['port']}")
+        # # for topic_info in self.node.local_info["publishers"]:
+        # #     if topic_info["name"] == self.name:
+        # #         self.connected = True
+        # #         break
         self.running = True
+        self.node.submit_loop_task(self.listen_loop(), False)
+        self.node.submit_loop_task(self.receive_loop(), False)
 
-    async def listen(self) -> None:
+    async def receive_loop(self) -> None:
         """Listens for incoming messages on the subscribed topic."""
-        logger.info(f"Subscriber {self.name} is listening...")
+        logger.info(f"Subscriber {self.name} is subscribing ...")
         while self.running:
             try:
                 # Wait for a message
@@ -205,6 +217,29 @@ class Subscriber(AbstractLanComSocket):
             except Exception as e:
                 logger.error(f"Error from topic '{self.name}' subscriber: {e}")
                 traceback.print_exc()
+
+    async def listen_loop(self) -> None:
+        """Listens for new publishers and connects to them."""
+        logger.info(f"Subscriber {self.name} is listening ...")
+        while self.running:
+            try:
+                publishers = self.node.nodes_map.get_publisher_info(self.name)
+                # print(f"Publishers: {publishers}")
+                for pub_info in publishers:
+                    if pub_info["socketID"] not in self.subscribed_components:
+                        self.connect(pub_info)
+                await async_sleep(0.1)
+            except Exception as e:
+                logger.error(f"Error from topic '{self.name}' listener: {e}")
+                traceback.print_exc()
+
+    def connect(self, pub_info: SocketInfo) -> None:
+        self.socket.connect(f"tcp://{pub_info['ip']}:{pub_info['port']}")
+        self.subscribed_components[pub_info["socketID"]] = pub_info
+        self.connected = True
+        logger.info(
+            f"Subscriber {self.name} is connected to {pub_info['name']} from {pub_info['ip']}:{pub_info['port']}"
+        )
 
     def on_shutdown(self) -> None:
         self.running = False

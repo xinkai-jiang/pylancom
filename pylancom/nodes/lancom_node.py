@@ -3,21 +3,14 @@ from __future__ import annotations
 import asyncio
 import socket
 import traceback
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Optional
 
 import msgpack
 import zmq.asyncio
 
 from ..config import MULTICAST_ADDR, MULTICAST_PORT
 from ..log import logger
-from ..type import (
-    AsyncSocket,
-    IPAddress,
-    LanComMsg,
-    NodeInfo,
-    NodeReqType,
-    SocketInfo,
-)
+from ..type import IPAddress, LanComMsg, NodeInfo, NodeReqType
 from ..utils.utils import (
     create_hash_identifier,
     create_heartbeat_message,
@@ -45,7 +38,6 @@ class LanComNode(AbstractNode):
         self.local_info["publishers"] = []
         self.local_info["services"] = []
         self.service_cbs: Dict[str, Callable[[bytes], bytes]] = {}
-        self.sub_sockets: Dict[str, List[AsyncSocket]] = {}
         super().__init__(node_name, node_ip)
 
     def create_socket(self, socket_type: int) -> zmq.asyncio.Socket:
@@ -67,7 +59,6 @@ class LanComNode(AbstractNode):
             )
             logger.debug("Multicast has been started")
             while self.running:
-                logger.debug("Sending multicast message")
                 msg = create_heartbeat_message(
                     self.node_id,
                     self.local_info["port"],
@@ -125,7 +116,7 @@ class LanComNode(AbstractNode):
         self.local_info["port"] = get_zmq_socket_port(node_socket)
         self.pub_socket = self.create_socket(zmq.PUB)
         self.pub_socket.bind(f"tcp://{self.node_ip}:0")
-        self.nodes_map.register_node(self.node_id, self.local_info)
+        self.nodes_map.update_node(self.node_id, self.local_info)
         node_service_cbs = {
             NodeReqType.PING.value: lambda x: LanComMsg.SUCCESS.value,
             NodeReqType.NODE_INFO.value: self.ping_cbs,
@@ -141,15 +132,3 @@ class LanComNode(AbstractNode):
 
     def ping_cbs(self, request: bytes) -> bytes:
         return msgpack.dumps(self.local_info)
-
-    def check_connection(self, updated_info):
-        pass
-
-    def register_sub_socket(
-        self, socket_info: SocketInfo, socket: AsyncSocket
-    ) -> None:
-        if socket_info["type"] != "subscriber":
-            raise Exception("Invalid socket type")
-        if socket_info["name"] not in self.sub_sockets.keys():
-            self.sub_sockets[socket_info["name"]] = []
-        self.sub_sockets[socket_info["name"]].append(socket)

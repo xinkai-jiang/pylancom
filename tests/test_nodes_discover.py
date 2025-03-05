@@ -50,7 +50,7 @@ if __name__ == "__main__":
     # test_node_task = mp.Process(target=start_test_node)
     # node_tasks.append(test_node_task)
     # test_node_task.start()
-    for i in range(1):
+    for i in range(3):
         task = mp.Process(target=start_node_task, args=(i,))
         task.start()
         node_tasks.append(task)
