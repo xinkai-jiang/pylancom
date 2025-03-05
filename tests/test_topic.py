@@ -6,25 +6,8 @@ from typing import Callable, Dict, List
 from utils import random_name
 
 import pylancom
-from pylancom import start_master_node
-from pylancom.component import Publisher, Subscriber
-
-
-def test_master_node_broadcast(ip: str = "127.0.0.1"):
-    master_node = start_master_node(ip)
-    master_node.spin()
-
-
-def create_service_callback(service_name: str) -> Callable[[str], str]:
-    def service_callback(msg: str) -> str:
-        try:
-            print(f"Service {service_name} received message: {msg}")
-            return msg
-        except Exception as e:
-            print(f"Error in service {service_name}: {e}")
-            return "Error"
-
-    return service_callback
+from pylancom.nodes.lancom_socket import Publisher, Subscriber
+from pylancom.utils.msg_utils import StrDecoder
 
 
 def create_subscriber_callback(
@@ -40,22 +23,21 @@ def create_subscriber_callback(
 def start_node(publisher_list: List[str], subscriber_list: List[str]):
     node_name = random_name("Node")
     node = pylancom.init_node(node_name, "127.0.0.1")
-    node.spin(block=False)
     publisher_dict: Dict[str, Publisher] = {}
     subscriber_dict: Dict[str, Subscriber] = {}
     for name in publisher_list:
         publisher_dict[name] = Publisher(name)
     for name in subscriber_list:
         subscriber_dict[name] = Subscriber(
-            name, str, create_subscriber_callback(name)
+            name, StrDecoder, create_subscriber_callback(name)
         )
     try:
         i = 0
         while True:
-            time.sleep(1)
             for name, publisher in publisher_dict.items():
-                # print(f"Publishing message from {name}")
+                # lancom_logger.debug(f"Publishing message from {name}")
                 publisher.publish_string(f"{name} message")
+                time.sleep(1)
             i += 1
     except KeyboardInterrupt:
         node.stop_node()
@@ -69,14 +51,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--ip", type=str, default="127.0.0.1")
     args = parser.parse_args()
-    p0 = mp.Process(target=test_master_node_broadcast, args=(args.ip,))
-    p0.start()
-    time.sleep(1)
     p1 = mp.Process(target=start_node, args=(["A", "B"], ["C", "D"]))
     p2 = mp.Process(target=start_node, args=(["C", "D"], ["A", "B"]))
     p1.start()
-    time.sleep(5)
-    print("Starting second node")
+    time.sleep(2)
     p2.start()
     p1.join()
     # p2.join()

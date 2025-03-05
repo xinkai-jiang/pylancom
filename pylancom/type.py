@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Dict, List, TypedDict
+from typing import List, TypedDict
 
 import zmq
 import zmq.asyncio
@@ -11,12 +11,6 @@ ServiceName = str
 AsyncSocket = zmq.asyncio.Socket
 HashIdentifier = str
 ComponentType = str
-
-
-class ComponentTypeEnum(Enum):
-    PUBLISHER = "PUBLISHER"
-    SUBSCRIBER = "SUBSCRIBER"
-    SERVICE = "SERVICE"
 
 
 class MasterReqType(Enum):
@@ -33,19 +27,34 @@ class MasterReqType(Enum):
 
 class NodeReqType(Enum):
     PING = "PING"
-    UPDATE_SUBSCRIPTION = "UPDATE_SUBSCRIPTION"
+    NODE_INFO = "NODE_INFO"
+    # UPDATE_SUBSCRIPTION = "UPDATE_SUBSCRIPTION"
 
 
-class ResponseType(Enum):
+class MsgType(Enum):
+    BYTES = b"0"
+    STR = b"1"
+    PROTOBUF = b"2"
+    JSON = b"3"
+    NSGPACK = b"4"
+
+
+class LanComMsg(Enum):
     SUCCESS = "SUCCESS"
     ERROR = "ERROR"
     TIMEOUT = "TIMEOUT"
     EMPTY = "EMPTY"
 
 
-class ComponentInfo(TypedDict):
+class ComponentTypeEnum(Enum):
+    PUBLISHER = "publisher"
+    SUBSCRIBER = "subscriber"
+    SERVICE = "service"
+
+
+class SocketInfo(TypedDict):
     name: str
-    componentID: HashIdentifier
+    socketID: HashIdentifier
     nodeID: HashIdentifier
     type: ComponentType
     ip: IPAddress
@@ -54,22 +63,15 @@ class ComponentInfo(TypedDict):
 
 class NodeInfo(TypedDict):
     name: str
-    nodeID: HashIdentifier  # hash code since bytes is not JSON serializable
+    nodeID: HashIdentifier
+    infoID: int
     ip: IPAddress
     type: str
     port: int
-    publishers: List[ComponentInfo]
-    subscribers: List[ComponentInfo]
-    services: List[ComponentInfo]
-    # topicPort: int
-    # topicList: List[ComponentInfo]
-    # servicePort: int
-    # serviceList: List[ComponentInfo]
-    # subscriberList: List[ComponentInfo]
+    publishers: List[SocketInfo]
+    services: List[SocketInfo]
 
 
-class ConnectionState(TypedDict):
-    masterID: HashIdentifier
-    timestamp: float
-    topic: Dict[TopicName, List[ComponentInfo]]
-    service: Dict[ServiceName, ComponentInfo]
+class UpdateConnection(TypedDict):
+    publishers: List[SocketInfo]
+    services: List[SocketInfo]

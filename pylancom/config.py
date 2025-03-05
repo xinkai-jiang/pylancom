@@ -1,7 +1,12 @@
-__VERSION__ = "0.1.0"
+__MAJOR__ = int(1)
+__MINOR__ = int(0)
+__PATCH__ = int(0)
 
+__VERSION__ = f"{__MAJOR__}.{__MINOR__}.{__PATCH__}"
+__VERSION_BYTES__ = bytes([__MAJOR__, __MINOR__, __PATCH__])
+__COMPATIBILITY__ = bytes([__MAJOR__, __MINOR__])
 BROADCAST_INTERVAL = 0.5
 HEARTBEAT_INTERVAL = 0.2
 MULTICAST_ADDR = "224.0.0.1"
-DISCOVERY_PORT = int(7720)
+MULTICAST_PORT = int(7720)
 MASTER_SERVICE_PORT = int(7721)
