@@ -1,54 +1,39 @@
 import json
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Dict
 
 import msgpack
 
-from ..type import MsgType
+
+def BytesEncoder(msg: bytes) -> bytes:
+    return msg
 
 
-def bytes2str(byte_msg: bytes) -> str:
-    return byte_msg.decode()
+def StrEncoder(msg: str) -> bytes:
+    return msg.encode()
 
 
-def bytes2dict(byte_msg: bytes) -> Dict:
-    return json.loads(byte_msg.decode())
+def JsonEncoder(msg: Dict) -> bytes:
+    return json.dumps(msg).encode()
 
 
-def bytes2msgpack(byte_msg: bytes) -> Dict:
-    return msgpack.loads(byte_msg)
+def MsgpackEncoder(msg: Dict) -> bytes:
+    result = msgpack.dumps(msg)
+    if result is None:
+        raise ValueError("Failed to encode message")
+    return result
 
 
-# def bytes2Proto(byte_msg: bytes, proto: Any) -> Any:
-#     proto.ParseFromString(byte_msg)
-#     return proto
+def BytesDecoder(msg: bytes) -> bytes:
+    return msg
 
 
-def str2bytes(str_msg: str) -> bytes:
-    return str_msg.encode()
+def StrDecoder(msg: bytes) -> str:
+    return msg.decode()
 
 
-def dict2bytes(dict_msg: Dict) -> bytes:
-    return json.dumps(dict_msg).encode()
+def JsonDecoder(msg: bytes) -> Any:
+    return json.loads(msg.decode())
 
 
-def msgpack2dict(msgpack_msg: Dict) -> Dict:
-    return msgpack.dumps(msgpack_msg)
-
-
-Bytes2ObjMap: Dict[str, Callable[[bytes], Any]] = {
-    MsgType.BYTES.value.decode(): lambda x: x,
-    MsgType.STR.value.decode(): bytes2str,
-    MsgType.JSON.value.decode(): bytes2dict,
-    MsgType.NSGPACK.value.decode(): msgpack2dict,
-}
-
-Obj2BytesMap: Dict[str, Callable[[Any], bytes]] = {
-    MsgType.BYTES.value.decode(): lambda x: x,
-    MsgType.STR.value.decode(): str2bytes,
-    MsgType.JSON.value.decode(): dict2bytes,
-    MsgType.NSGPACK.value.decode(): dict2bytes,
-}
-
-
-def parse_msg(msg: bytes) -> Tuple[str, bytes]:
-    return msg[:32].decode(), msg[32:]
+def MsgpackDecoder(msg: bytes) -> Any:
+    return msgpack.loads(msg)

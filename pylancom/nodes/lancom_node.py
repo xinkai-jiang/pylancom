@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import traceback
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, cast
 
 import msgpack
 import zmq.asyncio
@@ -14,7 +14,7 @@ from ..type import IPAddress, LanComMsg, NodeInfo, NodeReqType
 from ..utils.utils import (
     create_hash_identifier,
     create_heartbeat_message,
-    get_zmq_socket_port,
+    get_socket_port,
 )
 from .abstract_node import AbstractNode
 
@@ -28,15 +28,16 @@ class LanComNode(AbstractNode):
         LanComNode.instance = self
         self.node_id = create_hash_identifier()
         # Initialize the NodeInfo message
-        self.local_info = NodeInfo()
-        self.local_info["name"] = node_name
-        self.local_info["nodeID"] = self.node_id
-        self.local_info["ip"] = node_ip
-        self.local_info["type"] = "LanComNode"
-        self.local_info["infoID"] = 0
-        self.local_info["port"] = 0
-        self.local_info["publishers"] = []
-        self.local_info["services"] = []
+        self.local_info = NodeInfo(
+            name=node_name,
+            nodeID=self.node_id,
+            ip=node_ip,
+            type="LanComNode",
+            infoID=0,
+            port=0,
+            publishers=[],
+            services=[],
+        )
         self.service_cbs: Dict[str, Callable[[bytes], bytes]] = {}
         super().__init__(node_name, node_ip)
 
@@ -78,13 +79,15 @@ class LanComNode(AbstractNode):
         service_socket: zmq.asyncio.Socket,
         services: Dict[str, Callable[[bytes], bytes]],
     ) -> None:
+        if self.loop is None:
+            raise Exception("Event loop has not been initialized")
         while self.running:
             try:
-                service_name, request = await service_socket.recv_multipart()
+                name_bytes, request = await service_socket.recv_multipart()
             except Exception as e:
                 logger.error(f"Error occurred when receiving request: {e}")
                 traceback.print_exc()
-            service_name = service_name.decode()
+            service_name = name_bytes.decode()
             if service_name not in services.keys():
                 logger.error(f"Service {service_name} is not available")
                 continue
@@ -113,7 +116,7 @@ class LanComNode(AbstractNode):
     def initialize_event_loop(self):
         node_socket = self.create_socket(zmq.REP)
         node_socket.bind(f"tcp://{self.node_ip}:0")
-        self.local_info["port"] = get_zmq_socket_port(node_socket)
+        self.local_info["port"] = get_socket_port(node_socket)
         self.pub_socket = self.create_socket(zmq.PUB)
         self.pub_socket.bind(f"tcp://{self.node_ip}:0")
         self.nodes_map.update_node(self.node_id, self.local_info)
@@ -122,13 +125,13 @@ class LanComNode(AbstractNode):
             NodeReqType.NODE_INFO.value: self.ping_cbs,
         }
         self.submit_loop_task(self.service_loop(node_socket, node_service_cbs))
-        service_socket = self.create_socket(zmq.REP)
-        service_socket.bind(f"tcp://{self.node_ip}:0")
+        self.service_socket = self.create_socket(zmq.REP)
+        self.service_socket.bind(f"tcp://{self.node_ip}:0")
         self.submit_loop_task(
-            self.service_loop(service_socket, self.service_cbs)
+            self.service_loop(self.service_socket, self.service_cbs)
         )
         self.submit_loop_task(self.multicast_loop())
         super().initialize_event_loop()
 
     def ping_cbs(self, request: bytes) -> bytes:
-        return msgpack.dumps(self.local_info)
+        return cast(bytes, msgpack.dumps(self.local_info))

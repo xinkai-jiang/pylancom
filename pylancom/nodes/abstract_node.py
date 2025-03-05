@@ -9,7 +9,7 @@ import time
 import traceback
 from asyncio import AbstractEventLoop, get_running_loop
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Coroutine, Dict, List, Optional, Union, cast
 
 import msgpack
 import zmq
@@ -33,7 +33,7 @@ from ..utils.utils import send_bytes_request
 class NodesMap:
     def __init__(self):
         self.nodes_info: Dict[str, NodeInfo] = {}
-        self.nodes_info_id: Dict[str, str] = {}
+        self.nodes_info_id: Dict[str, int] = {}
         self.nodes_heartbeat: Dict[str, str] = {}
         self.publishers_dict: Dict[str, SocketInfo] = {}
         self.services_dict: Dict[str, SocketInfo] = {}
@@ -46,18 +46,6 @@ class NodesMap:
 
     def check_heartbeat(self, node_id: str, info_id: int) -> bool:
         return self.check_node(node_id) and self.check_info(node_id, info_id)
-
-    # def register_node(
-    #     self, node_id: str, node_info: NodeInfo
-    # ) -> None:
-    #     self.nodes_info[node_id] = node_info
-    #     self.nodes_info_id[node_id] = node_info["infoID"]
-    #     node_name = node_info["name"]
-    #     logger.debug(f"Node {node_name} has been registered")
-    #     updated_info = {
-    #         "publishers": node_info["publishers"],
-    #         "services": node_info["services"],
-    #     }
 
     def update_node(self, node_id: str, node_info: NodeInfo):
         if node_id not in self.nodes_info:
@@ -82,7 +70,7 @@ class NodesMap:
                 publishers.append(pub_info)
         return publishers
 
-    def get_service_info(self, service_name: str) -> SocketInfo:
+    def get_service_info(self, service_name: str) -> Optional[SocketInfo]:
         for service in self.services_dict.values():
             if service["name"] == service_name:
                 return service
@@ -106,7 +94,7 @@ class AbstractNode(abc.ABC):
 
     def submit_loop_task(
         self,
-        task: asyncio.Coroutine,
+        task: Coroutine,
         block: bool = False,
     ) -> Union[concurrent.futures.Future, Any]:
         if not self.loop:
@@ -143,7 +131,7 @@ class AbstractNode(abc.ABC):
     def stop_node(self):
         self.running = False
         try:
-            if self.loop.is_running():
+            if self.loop is not None:
                 self.loop.call_soon_threadsafe(self.loop.stop)
         except RuntimeError as e:
             logger.error(f"One error occurred when stop server: {e}")
@@ -202,7 +190,7 @@ class AbstractNode(abc.ABC):
                 node_port,
                 LanComMsg.EMPTY.value,
             )
-            node_info: NodeInfo = msgpack.loads(node_info_bytes)
+            node_info = cast(NodeInfo, msgpack.loads(node_info_bytes))
             self.nodes_map.update_node(node_id, node_info)
             # self.check_connection(updated_info)
             return

@@ -7,18 +7,7 @@ from utils import random_name
 
 import pylancom
 from pylancom.nodes.lancom_socket import Publisher, Subscriber
-
-
-def create_service_callback(service_name: str) -> Callable[[str], str]:
-    def service_callback(msg: str) -> str:
-        try:
-            print(f"Service {service_name} received message: {msg}")
-            return msg
-        except Exception as e:
-            print(f"Error in service {service_name}: {e}")
-            return "Error"
-
-    return service_callback
+from pylancom.utils.msg_utils import StrDecoder
 
 
 def create_subscriber_callback(
@@ -40,7 +29,7 @@ def start_node(publisher_list: List[str], subscriber_list: List[str]):
         publisher_dict[name] = Publisher(name)
     for name in subscriber_list:
         subscriber_dict[name] = Subscriber(
-            name, str, create_subscriber_callback(name)
+            name, StrDecoder, create_subscriber_callback(name)
         )
     try:
         i = 0

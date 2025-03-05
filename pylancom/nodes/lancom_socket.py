@@ -5,7 +5,7 @@ import time
 import traceback
 from asyncio import sleep as async_sleep
 from json import dumps
-from typing import Callable, Dict, Optional, Type, Union, cast
+from typing import Callable, Dict, Optional, TypeVar, cast
 
 import zmq
 import zmq.asyncio
@@ -18,10 +18,9 @@ from ..type import (
     HashIdentifier,
     SocketInfo,
 )
-from ..utils import msg_utils
 from ..utils.utils import (
     create_hash_identifier,
-    get_zmq_socket_port,
+    get_socket_port,
     send_bytes_request,
 )
 from .lancom_node import LanComNode
@@ -59,7 +58,7 @@ class AbstractLanComSocket(abc.ABC):
 
     def set_up_socket(self, zmq_socket: AsyncSocket) -> None:
         self.socket = zmq_socket
-        self.info["port"] = get_zmq_socket_port(zmq_socket)
+        self.info["port"] = get_socket_port(zmq_socket)
 
     @abc.abstractmethod
     def on_shutdown(self):
@@ -89,7 +88,6 @@ class Publisher(AbstractLanComSocket):
         self.publish_string(dumps(data))
 
     def on_shutdown(self) -> None:
-        self.node.local_publisher.pop(self.name)
         self.socket.close()
 
     async def send_bytes_async(self, bytes_msg: bytes) -> None:
@@ -97,12 +95,16 @@ class Publisher(AbstractLanComSocket):
         await self.socket.send_multipart([self.name.encode(), bytes_msg])
 
 
+MessageT = TypeVar("MessageT", bytes, str, dict)
+
+
 class Streamer(Publisher):
     def __init__(
         self,
         topic_name: str,
-        update_func: Callable[[], Optional[Union[str, bytes, Dict]]],
+        update_func: Callable[[], MessageT],
         fps: int,
+        msg_encoder: Callable[[MessageT], bytes],
         start_streaming: bool = False,
     ):
         super().__init__(topic_name)
@@ -110,29 +112,30 @@ class Streamer(Publisher):
         self.dt: float = 1 / fps
         self.update_func = update_func
         self.topic_byte = self.name.encode("utf-8")
+        self.msg_encoder = msg_encoder
         if start_streaming:
             self.start_streaming()
 
     def start_streaming(self):
-        self.node.submit_loop_task(self.update_loop, False)
+        self.node.submit_loop_task(self.update_loop(), False)
 
     def generate_byte_msg(self) -> bytes:
-        update_msg = self.update_func()
-        if isinstance(update_msg, str):
-            return update_msg.encode("utf-8")
-        elif isinstance(update_msg, bytes):
-            return update_msg
-        elif isinstance(update_msg, dict):
-            # return dumps(update_msg).encode("utf-8")
-            return dumps(
-                {
-                    "updateData": self.update_func(),
-                    "time": time.monotonic(),
-                }
-            ).encode("utf-8")
-        raise ValueError("Update function should return str, bytes or dict")
+        return self.msg_encoder(self.update_func())
+        # if isinstance(update_msg, str):
+        #     return update_msg.encode("utf-8")
+        # elif isinstance(update_msg, bytes):
+        #     return update_msg
+        # elif isinstance(update_msg, dict):
+        #     # return dumps(update_msg).encode("utf-8")
+        #     return dumps(
+        #         {
+        #             "updateData": self.update_func(),
+        #             "time": time.monotonic(),
+        #         }
+        #     ).encode("utf-8")
+        # raise ValueError("Update function should return str, bytes or dict")
 
-    async def update_loop(self):
+    async def update_loop(self) -> None:
         self.running = True
         last = 0.0
         logger.info(f"Topic {self.name} starts streaming")
@@ -142,65 +145,27 @@ class Streamer(Publisher):
                 if diff < self.dt:
                     await async_sleep(self.dt - diff)
                 last = time.monotonic()
-                await self.socket.send(
-                    b"".join([self.topic_byte, b"|", self.generate_byte_msg()])
-                )
+                await self.send_bytes_async(self.generate_byte_msg())
             except Exception as e:
                 logger.error(f"Error when streaming {self.name}: {e}")
                 traceback.print_exc()
         logger.info(f"Streamer for topic {self.name} is stopped")
 
 
-class ByteStreamer(Streamer):
-    def __init__(
-        self,
-        topic: str,
-        update_func: Callable[[], bytes],
-        fps: int,
-    ):
-        super().__init__(topic, update_func, fps)
-        self.update_func: Callable[[], bytes]
-
-    def generate_byte_msg(self) -> bytes:
-        return self.update_func()
-
-
-MessageT = Union[bytes, str, dict]
-
-
 class Subscriber(AbstractLanComSocket):
     def __init__(
         self,
         topic_name: str,
-        msg_type: Type[MessageT],
+        msg_decoder: Callable[[bytes], MessageT],
         callback: Callable[[MessageT], None],
     ):
         super().__init__(topic_name, ComponentTypeEnum.SUBSCRIBER.value, False)
         self.socket = self.node.create_socket(zmq.SUB)
         self.socket.setsockopt(zmq.SUBSCRIBE, self.name.encode())
         self.subscribed_components: Dict[HashIdentifier, SocketInfo] = {}
-        if msg_type is bytes:
-            self.decoder = cast(Callable[[bytes], bytes], lambda x: x)
-        elif msg_type is str:
-            self.decoder = msg_utils.bytes2str
-        elif msg_type is dict:
-            self.decoder = msg_utils.bytes2dict
-        else:
-            raise ValueError("Request type is not supported")
+        self.msg_decoder = msg_decoder
         self.connected = False
         self.callback = callback
-        # # register in the node sub socket dict
-        # if self.info["name"] not in self.node.sub_sockets.keys():
-        #     self.node.sub_sockets[self.info["name"]] = []
-        # self.node.sub_sockets[self.info["name"]].append(self.socket)
-        # publishers = self.node.nodes_map.get_publisher_info(self.name)
-        # for pub_info in publishers:
-        #     # self.subscribed_components[pub_info["socketID"]] = pub_info
-        #     self.socket.connect(f"tcp://{pub_info['ip']}:{pub_info['port']}")
-        # # for topic_info in self.node.local_info["publishers"]:
-        # #     if topic_info["name"] == self.name:
-        # #         self.connected = True
-        # #         break
         self.running = True
         self.node.submit_loop_task(self.listen_loop(), False)
         self.node.submit_loop_task(self.receive_loop(), False)
@@ -213,7 +178,7 @@ class Subscriber(AbstractLanComSocket):
                 # Wait for a message
                 _, msg = await self.socket.recv_multipart()
                 # Invoke the callback
-                self.callback(self.decoder(msg))
+                self.callback(self.msg_decoder(msg))
             except Exception as e:
                 logger.error(f"Error from topic '{self.name}' subscriber: {e}")
                 traceback.print_exc()
@@ -228,7 +193,7 @@ class Subscriber(AbstractLanComSocket):
                 for pub_info in publishers:
                     if pub_info["socketID"] not in self.subscribed_components:
                         self.connect(pub_info)
-                await async_sleep(0.1)
+                await async_sleep(0.5)
             except Exception as e:
                 logger.error(f"Error from topic '{self.name}' listener: {e}")
                 traceback.print_exc()
@@ -238,7 +203,8 @@ class Subscriber(AbstractLanComSocket):
         self.subscribed_components[pub_info["socketID"]] = pub_info
         self.connected = True
         logger.info(
-            f"Subscriber {self.name} is connected to {pub_info['name']} from {pub_info['ip']}:{pub_info['port']}"
+            f"Subscriber {self.name} is connected to {pub_info['name']}"
+            f" from {pub_info['ip']}:{pub_info['port']}"
         )
 
     def on_shutdown(self) -> None:
@@ -246,63 +212,39 @@ class Subscriber(AbstractLanComSocket):
         self.socket.close()
 
 
-RequestT = Union[bytes, str, dict]
-ResponseT = Union[bytes, str, dict]
+RequestT = TypeVar("RequestT", bytes, str, dict)
+ResponseT = TypeVar("ResponseT", bytes, str, dict)
 
 
 class Service(AbstractLanComSocket):
     def __init__(
         self,
         service_name: str,
-        request_type: Type[RequestT],
-        response_type: Type[ResponseT],
+        request_decoder: Callable[[bytes], RequestT],
+        response_encoder: Callable[[ResponseT], bytes],
         callback: Callable[[RequestT], ResponseT],
     ) -> None:
         super().__init__(service_name, ComponentTypeEnum.SERVICE.value, False)
         self.set_up_socket(self.node.service_socket)
+        # check the service is already registered locally
         for service_info in self.node.local_info["services"]:
             if service_info["name"] != self.name:
                 continue
             raise RuntimeError("Service has been registered locally")
+        if self.node.nodes_map.get_service_info(service_name) is not None:
+            raise RuntimeError("Service has been registered")
         self.node.local_info["services"].append(self.info)
+        self.node.local_info["infoID"] += 1
         self.node.service_cbs[self.name] = self.callback
         self.handle_request = callback
-        # if self.node.check_service(service_name) is not None:
-        #     logger.warning(f"Service {service_name} is already registered")
-        #     return
-        # self.decoder: Callable[[bytes], RequestT]
-        if request_type is bytes:
-            self.decoder = cast(Callable[[bytes], bytes], lambda x: x)
-        elif request_type is str:
-            self.decoder = msg_utils.bytes2str
-        elif request_type is dict:
-            self.decoder = msg_utils.bytes2dict
-        else:
-            raise ValueError("Request type is not supported")
-        # self.encoder: Callable[[ResponseT], bytes]
-        if response_type is bytes:
-            self.encoder = cast(Callable[[bytes], bytes], lambda x: x)
-        elif response_type is str:
-            self.encoder = msg_utils.str2bytes
-        elif response_type is dict:
-            self.encoder = msg_utils.dict2bytes
-        else:
-            raise ValueError("Response type is not supported")
+        self.request_decoder = request_decoder
+        self.response_encoder = response_encoder
         logger.info(f'"{self.name}" Service is started')
 
     def callback(self, msg: bytes) -> bytes:
-        request = self.decoder(msg)
+        request = self.request_decoder(msg)
         result = self.handle_request(request)
-        # TODO: not sure if we need to use the executor
-        # result = await asyncio.wait_for(
-        #     self.node.loop.run_in_executor(
-        #         self.node.executor, self.process_bytes_request, msg
-        #     ),
-        #     timeout=5.0,
-        # )
-        # TODO: check if the result is valid
-        return self.encoder(result)  # type: ignore
-        # await self.socket.send(self.encoder(result))
+        return self.response_encoder(result)
 
     def on_shutdown(self):
         self.node.local_info["services"].remove(self.info)
@@ -311,79 +253,23 @@ class Service(AbstractLanComSocket):
 
 class ServiceProxy:
     @staticmethod
-    def send_service_request(
-        service_component: SocketInfo,
-        request_type: Type[RequestT],
-        response_type: Type[ResponseT],
-        request: RequestT,
-        timeout: float = 5.0,
-    ) -> Optional[ResponseT]:
-        if request_type is bytes:
-            request = cast(bytes, request)
-        elif request_type is str:
-            request = msg_utils.str2bytes(cast(str, request))
-        elif request_type is dict:
-            request = msg_utils.dict2bytes(cast(dict, request))
-        else:
-            raise ValueError("Unsupported request type")
-        if LanComNode.instance is None:
-            raise ValueError("Lancom Node is not initialized")
-        node = LanComNode.instance
-        addr = f"tcp://{service_component['ip']}:{service_component['port']}"
-        response = node.submit_loop_task(
-            send_bytes_request,
-            True,
-            addr,
-            [service_component["name"].encode(), request],
-        )
-        # response = future.result(timeout)
-        print(f"Response: {response}")
-        if not isinstance(response, bytes):
-            logger.warning(f"Service {service_component['name']} is not exist")
-            return None
-        if response_type is bytes:
-            return cast(ResponseT, response)
-        elif response_type is str:
-            return cast(ResponseT, utils.bytes2str(response))
-        elif response_type is dict:
-            return cast(ResponseT, utils.bytes2dict(response))
-        else:
-            raise ValueError("Unsupported response type")
-
-    @staticmethod
     def request(
         service_name: str,
-        request_type: Type[RequestT],
-        response_type: Type[ResponseT],
+        request_encoder: Callable[[RequestT], bytes],
+        response_decoder: Callable[[bytes], ResponseT],
         request: RequestT,
-        timeout: float = 5.0,
     ) -> Optional[ResponseT]:
-        """
-        Convenience method to perform a service request in one call.
-
-        It chooses the appropriate encoder and decoder based on the request
-        and response types. Supported types are: bytes, str, and dict.
-
-        :param service_name: Name of the target service.
-        :param request_type: The type of the request (e.g., str, dict, bytes).
-        :param response_type: The type of the response (e.g., str, dict, bytes).
-        :param request: The request data.
-        :param endpoint: The ZeroMQ endpoint of the service.
-        :param timeout: Maximum time to wait for a response.
-        :return: The decoded response.
-        """
         if LanComNode.instance is None:
             raise ValueError("Lancom Node is not initialized")
         node = LanComNode.instance
-        service_component = node.check_service(service_name)
+        service_component = node.nodes_map.get_service_info(service_name)
         if service_component is None:
             logger.warning(f"Service {service_name} is not exist")
             return None
-        result = ServiceProxy.send_service_request(
-            service_component,
-            request_type,
-            response_type,
-            request,
-            timeout,
+        request_bytes = request_encoder(request)
+        addr = f"tcp://{service_component['ip']}:{service_component['port']}"
+        response = node.submit_loop_task(
+            send_bytes_request(addr, service_name, request_bytes),
+            True,
         )
-        return result  # type: ignore
+        return response_decoder(cast(bytes, response))
