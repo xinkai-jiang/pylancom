@@ -190,9 +190,10 @@ class AbstractNode(abc.ABC):
                 node_port,
                 LanComMsg.EMPTY.value,
             )
+            if node_info_bytes == LanComMsg.TIMEOUT.value.encode():
+                return
             node_info = cast(NodeInfo, msgpack.loads(node_info_bytes))
             self.nodes_map.update_node(node_id, node_info)
-            # self.check_connection(updated_info)
             return
         except Exception as e:
             logger.error(f"Error processing received message: {e}")

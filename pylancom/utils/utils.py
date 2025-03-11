@@ -64,6 +64,7 @@ def calculate_broadcast_addr(ip_addr: IPAddress) -> IPAddress:
 async def send_bytes_request(
     addr: str, service_name: str, bytes_msgs: bytes, timeout: float = 1.0
 ) -> bytes:
+    response = LanComMsg.TIMEOUT.value.encode()
     try:
         sock = zmq.asyncio.Context().socket(zmq.REQ)
         sock.connect(addr)
@@ -72,10 +73,9 @@ async def send_bytes_request(
 
         # Wait for a response with a timeout.
         response = await asyncio.wait_for(sock.recv(), timeout=timeout)
-        return response
     except asyncio.TimeoutError:
         logger.error(f"Request {service_name} timed out for {timeout} s.")
     finally:
         sock.disconnect(addr)
         sock.close()
-        return LanComMsg.TIMEOUT.value.encode()
+        return response
