@@ -10,13 +10,14 @@ import traceback
 from asyncio import AbstractEventLoop, get_running_loop
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Coroutine, Dict, List, Optional, Union, cast
+import platform
 
 import msgpack
 import zmq
 import zmq.asyncio
 from zmq.asyncio import Context as AsyncContext
 
-from ..config import __COMPATIBILITY__, MULTICAST_ADDR, MULTICAST_PORT
+from ..config import __COMPATIBILITY__
 from ..log import logger
 from ..type import (
     IPAddress,
@@ -78,10 +79,21 @@ class NodesMap:
 
 
 class AbstractNode(abc.ABC):
-    def __init__(self, node_name: str, node_ip: IPAddress) -> None:
+    def __init__(
+        self,
+        node_name: str,
+        node_ip: IPAddress,
+        multicast_addr: IPAddress = "224.0.0.1",
+        multicast_port: int = 7720
+    ) -> None:
         super().__init__()
         self.node_name = node_name
         self.node_ip = node_ip
+        self.multicast_addr = multicast_addr
+        self.multicast_port = multicast_port
+        # for running on Windows localhost, use a different multicast address
+        if self.node_ip == "127.0.0.1" and platform.system() == "Windows":
+            self.multicast_addr = "239.255.255.250"
         self.zmq_context: AsyncContext = zmq.asyncio.Context()
         self.executor = ThreadPoolExecutor(max_workers=10)
         self.running = False
@@ -146,13 +158,13 @@ class AbstractNode(abc.ABC):
             )
             _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             # _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-            group = socket.inet_aton(MULTICAST_ADDR)
+            group = socket.inet_aton(self.multicast_addr)
             _socket.setsockopt(
                 socket.IPPROTO_IP,
                 socket.IP_ADD_MEMBERSHIP,
                 struct.pack("4sL", group, socket.INADDR_ANY),
             )
-            _socket.bind(("", MULTICAST_PORT))
+            _socket.bind(("", self.multicast_port))
             while self.running:
                 try:
                     data, addr = await get_running_loop().run_in_executor(

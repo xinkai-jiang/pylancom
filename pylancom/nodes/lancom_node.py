@@ -8,7 +8,6 @@ from typing import Callable, Dict, Optional, cast
 import msgpack
 import zmq.asyncio
 
-from ..config import MULTICAST_ADDR, MULTICAST_PORT
 from ..log import logger
 from ..type import IPAddress, LanComMsg, NodeInfo, NodeReqType
 from ..utils.utils import (
@@ -65,7 +64,7 @@ class LanComNode(AbstractNode):
                     self.local_info["port"],
                     self.local_info["infoID"],
                 )
-                _socket.sendto(msg, (MULTICAST_ADDR, MULTICAST_PORT))
+                _socket.sendto(msg, (self.multicast_addr, self.multicast_port))
                 await asyncio.sleep(1)  # Prevent excessive CPU usage
         except Exception as e:
             logger.error(f"Multicast error: {e}")
