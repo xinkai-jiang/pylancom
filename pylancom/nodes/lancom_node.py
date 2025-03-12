@@ -51,7 +51,7 @@ class LanComNode(AbstractNode):
                 socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP
             )
             _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            # _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
             _socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
             _socket.setsockopt(
                 socket.IPPROTO_IP,

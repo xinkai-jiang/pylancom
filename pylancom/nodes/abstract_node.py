@@ -145,7 +145,7 @@ class AbstractNode(abc.ABC):
                 socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP
             )
             _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            # _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
             group = socket.inet_aton(MULTICAST_ADDR)
             _socket.setsockopt(
                 socket.IPPROTO_IP,
@@ -163,9 +163,9 @@ class AbstractNode(abc.ABC):
                     logger.error(f"Error receiving multicast message: {e}")
                     traceback.print_exc()
                 await asyncio.sleep(0.5)
-
         except Exception as e:
             logger.error(f"Listening loop error: {e}")
+            traceback.print_exc()
         finally:
             _socket.close()
             logger.info("Multicast receiving has been stopped")
