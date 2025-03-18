@@ -8,9 +8,9 @@ from typing import Callable, Dict, Optional, cast
 import msgpack
 import zmq.asyncio
 
-from ..log import logger
-from ..type import IPAddress, LanComMsg, NodeInfo, NodeReqType
-from ..utils.utils import (
+from ..utils.log import logger
+from ..lancom_type import IPAddress, LanComMsg, NodeInfo, NodeReqType
+from ..utils.msg import (
     create_hash_identifier,
     create_heartbeat_message,
     get_socket_port,
@@ -57,7 +57,7 @@ class LanComNode(AbstractNode):
                 socket.IP_MULTICAST_IF,
                 socket.inet_aton(self.node_ip),
             )
-            logger.debug("Multicast has been started")
+            logger.debug(f"Multicast has been started at {self.node_ip}")
             while self.running:
                 msg = create_heartbeat_message(
                     self.node_id,
@@ -121,7 +121,7 @@ class LanComNode(AbstractNode):
         self.nodes_map.update_node(self.node_id, self.local_info)
         node_service_cbs = {
             NodeReqType.PING.value: lambda x: LanComMsg.SUCCESS.value,
-            NodeReqType.NODE_INFO.value: self.ping_cbs,
+            NodeReqType.NODE_INFO.value: self.node_info_cbs,
         }
         self.submit_loop_task(self.service_loop(node_socket, node_service_cbs))
         self.service_socket = self.create_socket(zmq.REP)
@@ -132,5 +132,5 @@ class LanComNode(AbstractNode):
         self.submit_loop_task(self.multicast_loop())
         super().initialize_event_loop()
 
-    def ping_cbs(self, request: bytes) -> bytes:
+    def node_info_cbs(self, request: bytes) -> bytes:
         return cast(bytes, msgpack.dumps(self.local_info))

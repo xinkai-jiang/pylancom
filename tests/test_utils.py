@@ -1,7 +1,7 @@
 import importlib.metadata
 
 import pylancom
-from pylancom.utils.utils import (
+from pylancom.utils.msg import (
     create_hash_identifier,
     create_heartbeat_message,
 )

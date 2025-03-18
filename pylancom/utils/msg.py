@@ -8,8 +8,8 @@ import zmq
 import zmq.asyncio
 
 from ..config import __VERSION_BYTES__
-from ..log import logger
-from ..type import HashIdentifier, IPAddress, LanComMsg, Port
+from .log import logger
+from ..lancom_type import HashIdentifier, IPAddress, LanComMsg, Port
 
 
 def create_hash_identifier() -> HashIdentifier:

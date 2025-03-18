@@ -6,7 +6,7 @@ from utils import random_name
 
 import pylancom
 from pylancom.nodes.lancom_socket import Service, ServiceProxy
-from pylancom.utils.msg_utils import StrDecoder, StrEncoder
+from pylancom.utils.serialization import StrDecoder, StrEncoder
 
 
 def create_service_callback(service_name: str) -> Callable[[str], str]:

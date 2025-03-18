@@ -18,8 +18,8 @@ import zmq.asyncio
 from zmq.asyncio import Context as AsyncContext
 
 from ..config import __COMPATIBILITY__
-from ..log import logger
-from ..type import (
+from ..utils.log import logger
+from ..lancom_type import (
     IPAddress,
     LanComMsg,
     NodeInfo,
@@ -28,7 +28,7 @@ from ..type import (
     SocketInfo,
     TopicName,
 )
-from ..utils.utils import send_bytes_request
+from ..utils.msg import send_bytes_request
 
 
 class NodesMap:
@@ -99,7 +99,10 @@ class AbstractNode(abc.ABC):
         self.running = False
         self.nodes_map = NodesMap()
         self.loop: Optional[AbstractEventLoop] = None
-        self.start_spin_task()
+        # start spin task
+        self.executor.submit(self.spin_task)
+        while not self.running:
+            time.sleep(0.05)
 
     def create_socket(self, socket_type: int) -> zmq.asyncio.Socket:
         return self.zmq_context.socket(socket_type)
@@ -118,11 +121,6 @@ class AbstractNode(abc.ABC):
 
     def spin(self) -> None:
         while self.running:
-            time.sleep(0.05)
-
-    def start_spin_task(self) -> None:
-        self.executor.submit(self.spin_task)
-        while not self.running:
             time.sleep(0.05)
 
     def spin_task(self) -> None:

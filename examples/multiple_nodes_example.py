@@ -4,7 +4,7 @@ import time
 from typing import List
 
 from pylancom.nodes.abstract_node import AbstractNode
-from pylancom.type import IPAddress
+from pylancom.lancom_type import IPAddress
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

@@ -10,15 +10,15 @@ from typing import Callable, Dict, Optional, TypeVar, cast
 import zmq
 import zmq.asyncio
 
-from ..log import logger
-from ..type import (
+from ..utils.log import logger
+from ..lancom_type import (
     AsyncSocket,
     ComponentType,
-    ComponentTypeEnum,
+    SocketTypeEnum,
     HashIdentifier,
     SocketInfo,
 )
-from ..utils.utils import (
+from ..utils.msg import (
     create_hash_identifier,
     get_socket_port,
     send_bytes_request,
@@ -69,7 +69,7 @@ class Publisher(AbstractLanComSocket):
     def __init__(self, topic_name: str, with_local_namespace: bool = False):
         super().__init__(
             topic_name,
-            ComponentTypeEnum.PUBLISHER.value,
+            SocketTypeEnum.PUBLISHER.value,
             with_local_namespace,
         )
         self.set_up_socket(self.node.pub_socket)
@@ -159,7 +159,7 @@ class Subscriber(AbstractLanComSocket):
         msg_decoder: Callable[[bytes], MessageT],
         callback: Callable[[MessageT], None],
     ):
-        super().__init__(topic_name, ComponentTypeEnum.SUBSCRIBER.value, False)
+        super().__init__(topic_name, SocketTypeEnum.SUBSCRIBER.value, False)
         self.socket = self.node.create_socket(zmq.SUB)
         self.socket.setsockopt(zmq.SUBSCRIBE, self.name.encode())
         self.subscribed_components: Dict[HashIdentifier, SocketInfo] = {}
@@ -224,7 +224,7 @@ class Service(AbstractLanComSocket):
         response_encoder: Callable[[ResponseT], bytes],
         callback: Callable[[RequestT], ResponseT],
     ) -> None:
-        super().__init__(service_name, ComponentTypeEnum.SERVICE.value, False)
+        super().__init__(service_name, SocketTypeEnum.SERVICE.value, False)
         self.set_up_socket(self.node.service_socket)
         # check the service is already registered locally
         for service_info in self.node.local_info["services"]:

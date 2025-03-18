@@ -4,11 +4,11 @@ import platform
 
 # Fix for Windows event loop to avoid ZMQ warnings
 if platform.system() == "Windows":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())  # type: ignore
 
 # from pylancom.abstract_node import AbstractNode
 from .config import __VERSION__ as __version__
-from .log import logger as lancom_logger
+from .utils.log import logger
 from .nodes.lancom_node import LanComNode
 
 

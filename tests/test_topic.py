@@ -7,7 +7,7 @@ from utils import random_name
 
 import pylancom
 from pylancom.nodes.lancom_socket import Publisher, Subscriber
-from pylancom.utils.msg_utils import StrDecoder
+from pylancom.utils.serialization import StrDecoder
 
 
 def create_subscriber_callback(
