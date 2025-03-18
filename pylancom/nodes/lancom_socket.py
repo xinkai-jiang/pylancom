@@ -10,14 +10,14 @@ from typing import Callable, Dict, Optional, TypeVar, cast
 import zmq
 import zmq.asyncio
 
-from ..utils.log import logger
 from ..lancom_type import (
     AsyncSocket,
     ComponentType,
-    SocketTypeEnum,
     HashIdentifier,
     SocketInfo,
+    SocketTypeEnum,
 )
+from ..utils.log import logger
 from ..utils.msg import (
     create_hash_identifier,
     get_socket_port,

@@ -1,10 +1,7 @@
 import importlib.metadata
 
 import pylancom
-from pylancom.utils.msg import (
-    create_hash_identifier,
-    create_heartbeat_message,
-)
+from pylancom.utils.msg import create_hash_identifier, create_heartbeat_message
 
 
 def test_package_version():

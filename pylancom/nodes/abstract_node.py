@@ -3,6 +3,7 @@ from __future__ import annotations
 import abc
 import asyncio
 import concurrent.futures
+import platform
 import socket
 import struct
 import time
@@ -10,7 +11,6 @@ import traceback
 from asyncio import AbstractEventLoop, get_running_loop
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Coroutine, Dict, List, Optional, Union, cast
-import platform
 
 import msgpack
 import zmq
@@ -18,7 +18,6 @@ import zmq.asyncio
 from zmq.asyncio import Context as AsyncContext
 
 from ..config import __COMPATIBILITY__
-from ..utils.log import logger
 from ..lancom_type import (
     IPAddress,
     LanComMsg,
@@ -28,6 +27,7 @@ from ..lancom_type import (
     SocketInfo,
     TopicName,
 )
+from ..utils.log import logger
 from ..utils.msg import send_bytes_request
 
 
@@ -84,7 +84,7 @@ class AbstractNode(abc.ABC):
         node_name: str,
         node_ip: IPAddress,
         multicast_addr: IPAddress = "224.0.0.1",
-        multicast_port: int = 7720
+        multicast_port: int = 7720,
     ) -> None:
         super().__init__()
         self.node_name = node_name

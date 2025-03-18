@@ -5,8 +5,8 @@ from typing import List
 
 import pytest
 
-from pylancom.nodes.abstract_node import AbstractNode
 from pylancom.lancom_type import IPAddress, NodeInfo
+from pylancom.nodes.abstract_node import AbstractNode
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

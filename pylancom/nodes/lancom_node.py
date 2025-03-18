@@ -8,8 +8,8 @@ from typing import Callable, Dict, Optional, cast
 import msgpack
 import zmq.asyncio
 
-from ..utils.log import logger
 from ..lancom_type import IPAddress, LanComMsg, NodeInfo, NodeReqType
+from ..utils.log import logger
 from ..utils.msg import (
     create_hash_identifier,
     create_heartbeat_message,
